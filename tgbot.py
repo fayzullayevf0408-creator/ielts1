@@ -19,9 +19,7 @@ dp = Dispatcher()
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 # Ma'lumotlar bazasi va statistika xotirasi
-user_data = (
-    {}
-)  # {user_id: {"lang": "uz", "day": 1, "is_active": True, "idioms": [], "words_count": 0, "essays_count": 0, "last_reset": date}}
+user_data = {}  # {user_id: {"lang": "uz", "day": 1, "is_active": True, "idioms": [], "words_count": 0, "essays_count": 0, "last_reset": date}}
 all_users = set()
 bot_stats = {
     "requests_daily": 0,
@@ -31,13 +29,15 @@ bot_stats = {
 }
 
 
-# FSM holatlari
+# FSM holatlari (Yangi speaking va flashcard holatlari qo'shildi)
 class BotStates(StatesGroup):
   waiting_for_word = State()
   waiting_for_essay_topic = State()
   waiting_for_essay_photo_or_text = State()
   waiting_for_suggestion = State()
   waiting_for_broadcast = State()
+  waiting_for_speaking = State()
+  waiting_for_flashcard = State()
 
 
 # Til tanlash menyusi
@@ -59,7 +59,7 @@ def get_language_menu():
   )
 
 
-# Asosiy menyu (Tilga qarab o'zgaradi + Admin tugmalari)
+# Asosiy menyu (Yangi funksiyalar tugmalari qo'shildi)
 def get_main_menu(lang="uz", user_id=None):
   if lang == "en":
     keyboard = [
@@ -78,6 +78,19 @@ def get_main_menu(lang="uz", user_id=None):
         [
             InlineKeyboardButton(
                 text="🔥 31-Day Idiom Challenge", callback_data="mode_idiom"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📇 Flashcards (Vocabulary)", callback_data="mode_flashcard"
+            ),
+            InlineKeyboardButton(
+                text="🎤 Speaking Simulator", callback_data="mode_speaking"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="🎲 Random IELTS Topic", callback_data="mode_random_topic"
             )
         ],
         [
@@ -122,6 +135,20 @@ def get_main_menu(lang="uz", user_id=None):
         ],
         [
             InlineKeyboardButton(
+                text="📇 Карточки (Flashcards)", callback_data="mode_flashcard"
+            ),
+            InlineKeyboardButton(
+                text="🎤 Speaking Симулятор", callback_data="mode_speaking"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="🎲 Случайная тема IELTS",
+                callback_data="mode_random_topic",
+            )
+        ],
+        [
+            InlineKeyboardButton(
                 text="📚 Изученные идиомы", callback_data="mode_history"
             ),
             InlineKeyboardButton(
@@ -159,6 +186,20 @@ def get_main_menu(lang="uz", user_id=None):
             InlineKeyboardButton(
                 text="🔥 31-Kunlik Idioma Challenge",
                 callback_data="mode_idiom",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="📇 Flashcards (Kartochkalar)", callback_data="mode_flashcard"
+            ),
+            InlineKeyboardButton(
+                text="🎤 Speaking Simulator", callback_data="mode_speaking"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="🎲 Tasodifiy IELTS Mavzu (Random)",
+                callback_data="mode_random_topic",
             )
         ],
         [
@@ -369,19 +410,30 @@ async def receive_suggestion(message: types.Message, state: FSMContext):
   await state.clear()
 
 
-# Matematik masalalar (Coming Soon)
+# Matematik masalalar
 @dp.callback_query(F.data == "mode_math")
-async def math_coming_soon(callback: types.CallbackQuery):
+async def math_mode(callback: types.CallbackQuery):
   user_id = callback.from_user.id
   lang = user_data.get(user_id, {}).get("lang", "uz")
-  msgs = {
-      "uz": "🚧 Matematik masalalar / misollar bo'limi: Coming Soon (Tez kunda)!",
-      "en": "🚧 Math Problems / Examples section: Coming Soon!",
-      "ru": (
-          "🚧 Раздел математических задач / примеров: Coming Soon (Скоро)!"
-      ),
-  }
-  await callback.answer(msgs.get(lang, msgs["uz"]), show_alert=True)
+  update_request_stats()
+  prompt = (
+      f"Generate a challenging math problem (algebra or logic) with its step-by-step solution. "
+      f"Output strictly in language '{lang}'. No asterisks (**)."
+  )
+  try:
+    completion = groq_client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.5,
+        max_tokens=1000,
+    )
+    await callback.message.answer(
+        completion.choices[0].message.content,
+        reply_markup=get_main_menu(lang, user_id),
+    )
+  except Exception:
+    await callback.message.answer("❌ Xatolik yuz berdi.")
+  await callback.answer()
 
 
 # AI kimligini so'raganda
@@ -398,12 +450,14 @@ async def who_are_you(message: types.Message):
   )
 
 
+# --- YAGONA MODE CALLBACK HANDLER ---
 @dp.callback_query(F.data.startswith("mode_"))
 async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
   action = callback.data.split("_")[1]
   user_id = callback.from_user.id
   lang = user_data.get(user_id, {}).get("lang", "uz")
   check_and_reset_limits(user_id)
+
   if action == "word":
     if user_data[user_id]["words_count"] >= 30:
       msgs = {
@@ -432,6 +486,7 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
         "ru": "✍️ Отправьте мне любое слово или фразу для анализа:",
     }
     await callback.message.answer(prompts.get(lang, prompts["uz"]))
+
   elif action == "essay":
     if user_data[user_id]["essays_count"] >= 5:
       msgs = {
@@ -460,6 +515,7 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
         "ru": "📝 Сначала отправьте тему эссе для проверки:",
     }
     await callback.message.answer(prompts.get(lang, prompts["uz"]))
+
   elif action == "idiom":
     if user_id in user_data and user_data[user_id].get("is_active"):
       current_day = user_data[user_id]["day"]
@@ -497,6 +553,7 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
       }
       await callback.message.answer(msgs.get(lang, msgs["uz"]))
       asyncio.create_task(send_daily_idiom_for_user(user_id))
+
   elif action == "history":
     if user_id in user_data and user_data[user_id].get("idioms"):
       hist_title = {
@@ -516,14 +573,13 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
               "📭 Hozircha o'tilgan idiomalar yo'q. Challenge'ni boshlang!"
           ),
           "en": "📭 No idioms learned yet. Start the challenge!",
-          "ru": (
-              "📭 Пока нет изученных идиом. Начните челлендж!"
-          ),
+          "ru": "📭 Пока нет изученных идиом. Начните челлендж!",
       }
       await callback.message.answer(
           msgs.get(lang, msgs["uz"]),
           reply_markup=get_main_menu(lang, user_id),
       )
+
   elif action == "quiz":
     if user_id in user_data and user_data[user_id].get("idioms"):
       update_request_stats()
@@ -551,7 +607,108 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
           msgs.get(lang, msgs["uz"]),
           reply_markup=get_main_menu(lang, user_id),
       )
+
+  # --- YANGI QO'SHILGAN REJIMLAR ---
+  elif action == "flashcard":
+    update_request_stats()
+    prompt = (
+        f"Generate an IELTS vocabulary flashcard containing an advanced word, "
+        f"its definition, and a practical example sentence. "
+        f"Output strictly in language '{lang}'. No asterisks (**)."
+    )
+    try:
+      completion = groq_client.chat.completions.create(
+          model="openai/gpt-oss-120b",
+          messages=[{"role": "user", "content": prompt}],
+          temperature=0.7,
+          max_tokens=500,
+      )
+      await callback.message.answer(
+          "📇 **IELTS Flashcard:**\n\n"
+          + completion.choices[0].message.content,
+          reply_markup=get_main_menu(lang, user_id),
+      )
+    except Exception:
+      await callback.message.answer("❌ Xatolik yuz berdi.")
+
+  elif action == "speaking":
+    await state.set_state(BotStates.waiting_for_speaking)
+    msgs = {
+        "uz": (
+            "🎤 **IELTS Speaking Simulator**\n\nSizga Speaking Part 1 uchun"
+            " savol beraman. Unga javobingizni matn ko'rinishida yuboring,"
+            " men uni baholab, xatolarini to'g'irlab beraman.\n\n📝"
+            " **Savol:** Tell me about your hometown. What do you like"
+            " most about it?"
+        ),
+        "en": (
+            "🎤 **IELTS Speaking Simulator**\n\nSend your answer as text, and I"
+            " will evaluate it.\n\n📝 **Question:** Tell me about your hometown."
+            " What do you like most about it?"
+        ),
+        "ru": (
+            "🎤 **IELTS Speaking Simulator**\n\nОтправьте ваш ответ на вопрос:"
+            " 'Tell me about your hometown.' Я оценю его."
+        ),
+    }
+    await callback.message.answer(msgs.get(lang, msgs["uz"]))
+
+  elif action == "random":  # callback_data="mode_random_topic"
+    update_request_stats()
+    prompt = (
+        f"Generate a random IELTS Speaking Part 2 cue card topic with bullet points, "
+        f"and a separate IELTS Writing Task 2 topic. "
+        f"Output strictly in language '{lang}'. No asterisks (**)."
+    )
+    try:
+      completion = groq_client.chat.completions.create(
+          model="openai/gpt-oss-120b",
+          messages=[{"role": "user", "content": prompt}],
+          temperature=0.7,
+          max_tokens=800,
+      )
+      await callback.message.answer(
+          "🎲 **Tasodifiy IELTS Mavzulari:**\n\n"
+          + completion.choices[0].message.content,
+          reply_markup=get_main_menu(lang, user_id),
+      )
+    except Exception:
+      await callback.message.answer("❌ Xatolik yuz berdi.")
+
   await callback.answer()
+
+
+# Speaking javobini qabul qilish va baholash
+@dp.message(BotStates.waiting_for_speaking)
+async def process_speaking_answer(message: types.Message, state: FSMContext):
+  user_id = message.from_user.id
+  lang = user_data.get(user_id, {}).get("lang", "uz")
+  user_answer = message.text or "[Text response]"
+  update_request_stats()
+
+  system_prompt = (
+      "You are an expert IELTS Speaking Examiner. Evaluate the candidate's response. "
+      "Provide feedback on Lexical Resource, Grammatical Range, and Fluency indicators. "
+      f"Output strictly in language '{lang}'. No asterisks (**)."
+  )
+
+  try:
+    completion = groq_client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Candidate's answer: {user_answer}"},
+        ],
+        temperature=0.2,
+        max_tokens=1000,
+    )
+    await message.answer(
+        completion.choices[0].message.content,
+        reply_markup=get_main_menu(lang, user_id),
+    )
+    await state.clear()
+  except Exception:
+    await message.answer("❌ Xatolik yuz berdi.")
 
 
 # 31 kunlik avtomatik idioma yuborish
@@ -647,7 +804,7 @@ async def process_essay_topic(message: types.Message, state: FSMContext):
   await message.answer(msgs.get(lang, msgs["uz"]))
 
 
-# Esse tekshiruvi (Rasm yoki Matn) - QAT'IY IELTS EXAMINER REJIMI BILAN YANGILANDI
+# Esse tekshiruvi (O'ta qat'iy IELTS Examiner rejimi bilan)
 @dp.message(BotStates.waiting_for_essay_photo_or_text)
 async def process_essay_submission(message: types.Message, state: FSMContext):
   user_id = message.from_user.id
@@ -669,16 +826,10 @@ async def process_essay_submission(message: types.Message, state: FSMContext):
   data = await state.get_data()
   topic = data.get("essay_topic", "Topic")
   await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-  essay_content = ""
-  if message.photo:
-    photo = message.photo[-1]
-    file = await bot.get_file(photo.file_id)
-    essay_content = f"[Photo uploaded by user]"
-  else:
-    essay_content = message.text
+  
+  essay_content = message.text if message.text else "[Photo uploaded]"
 
   try:
-    # QAT'IY IELTS EXAMINER PROMPT VA TEMPERATURE=0.1 QO'SHILDI
     system_prompt = (
         "You are an exceptionally strict, uncompromising, and professional official IELTS Examiner. "
         "Your evaluations must reflect real, rigid IELTS grading standards (Task 2).\n\n"
@@ -702,7 +853,7 @@ async def process_essay_submission(message: types.Message, state: FSMContext):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.1,  # Adolatli va qat'iy baholash uchun past daraja
+        temperature=0.1,
         max_tokens=2048,
     )
     await message.answer(
@@ -717,13 +868,13 @@ async def process_essay_submission(message: types.Message, state: FSMContext):
     )
 
 
-# 18+ filtri va boshqa xabarlar uchun yo'naltiruvchi handler
+# 18+ filtri va umumiy xabarlar handler'i
 @dp.message()
 async def general_message_handler(message: types.Message):
   user_id = message.from_user.id
   lang = user_data.get(user_id, {}).get("lang", "uz")
   text_lower = message.text.lower()
-  # 18+ va taqiqlangan so'zlar filtri
+  
   forbidden_words = [
       "porn",
       "sex",
@@ -748,16 +899,13 @@ async def general_message_handler(message: types.Message):
         msgs.get(lang, msgs["uz"]), reply_markup=get_main_menu(lang, user_id)
     )
     return
-  # Agar foydalanuvchi so'z yoki esse so'ramasdan boshqa narsa yozsa
+
   msgs = {
       "uz": (
-          "⚠️ Iltimos, so'z yoki esse tahlil qilish uchun quyidagi tugmalardan"
-          " foydalaning:"
+          "⚠️ Iltimos, amal bajarish uchun quyidagi tugmalardan foydalaning:"
       ),
-      "en": "⚠️ Please use the buttons below to analyze words or essays:",
-      "ru": (
-          "⚠️ Пожалуйста, используйте кнопки ниже для анализа слов или эссе:"
-      ),
+      "en": "⚠️ Please use the buttons below to interact:",
+      "ru": "⚠️ Пожалуйста, используйте кнопки ниже для взаимодействия:",
   }
   await message.answer(
       msgs.get(lang, msgs["uz"]), reply_markup=get_main_menu(lang, user_id)
@@ -766,7 +914,7 @@ async def general_message_handler(message: types.Message):
 
 async def main():
   logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-  print("Bot barcha funksiyalar bilan mukammal ishga tushdi...")
+  print("Bot barcha yangi funksiyalar bilan mukammal ishga tushdi...")
   await dp.start_polling(bot)
 
 
