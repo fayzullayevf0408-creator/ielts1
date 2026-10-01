@@ -19,7 +19,9 @@ dp = Dispatcher()
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 # Ma'lumotlar bazasi va statistika xotirasi
-user_data = {}  # {user_id: {"lang": "uz", "day": 1, "is_active": True, "idioms": [], "words_count": 0, "essays_count": 0, "last_reset": date}}
+user_data = (
+    {}
+)  # {user_id: {"lang": "uz", "day": 1, "is_active": True, "idioms": [], "words_count": 0, "essays_count": 0, "last_reset": date}}
 all_users = set()
 bot_stats = {
     "requests_daily": 0,
@@ -182,7 +184,6 @@ def get_main_menu(lang="uz", user_id=None):
             ),
         ],
     ]
-
   if user_id == ADMIN_ID:
     keyboard.append([
         InlineKeyboardButton(
@@ -192,7 +193,6 @@ def get_main_menu(lang="uz", user_id=None):
             text="📢 Broadcast (Xabar tarqatish)", callback_data="admin_broadcast"
         ),
     ])
-
   return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
@@ -206,7 +206,6 @@ def update_request_stats():
       bot_stats["requests_monthly"] = 0
     bot_stats["requests_daily"] = 0
     bot_stats["last_date"] = today
-
   bot_stats["requests_daily"] += 1
   bot_stats["requests_monthly"] += 1
   bot_stats["requests_yearly"] += 1
@@ -238,7 +237,6 @@ async def start_cmd(message: types.Message, state: FSMContext):
   user_id = message.from_user.id
   all_users.add(user_id)
   check_and_reset_limits(user_id)
-
   await message.answer(
       "Assalomu alaykum! 🤖\nMen Fayzullayev Firdavs tomonidan yaratilgan"
       " yordamchi botman.\n\nIltimos, tilni tanlang / Please select your"
@@ -252,7 +250,6 @@ async def start_cmd(message: types.Message, state: FSMContext):
 async def set_language(callback: types.CallbackQuery):
   user_id = callback.from_user.id
   check_and_reset_limits(user_id)
-
   if callback.data == "change_lang":
     await callback.message.answer(
         "Tilni tanlang / Select language / Выберите язык:",
@@ -260,10 +257,8 @@ async def set_language(callback: types.CallbackQuery):
     )
     await callback.answer()
     return
-
   lang = callback.data.split("_")[1]
   user_data[user_id]["lang"] = lang
-
   wel_texts = {
       "uz": (
           "✅ Til O'zbek tiliga o'zgartirildi!\nMen Fayzullayev Firdavs"
@@ -279,7 +274,6 @@ async def set_language(callback: types.CallbackQuery):
           " нужный раздел из меню ниже:"
       ),
   }
-
   await callback.message.answer(
       wel_texts.get(lang, wel_texts["uz"]),
       reply_markup=get_main_menu(lang, user_id),
@@ -291,11 +285,8 @@ async def set_language(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "admin_stats")
 async def show_admin_stats(callback: types.CallbackQuery):
   if callback.from_user.id != ADMIN_ID:
-    await callback.answer(
-        "Bu buyruq faqat admin uchun!", show_alert=True
-    )
+    await callback.answer("Bu buyruq faqat admin uchun!", show_alert=True)
     return
-
   total_users = len(all_users)
   text = (
       f"📊 **Bot Statistikasi:**\n\n👥 **Foydalanuvchilar:**\n- Jami:"
@@ -314,9 +305,7 @@ async def show_admin_stats(callback: types.CallbackQuery):
 @dp.callback_query(F.data == "admin_broadcast")
 async def start_broadcast(callback: types.CallbackQuery, state: FSMContext):
   if callback.from_user.id != ADMIN_ID:
-    await callback.answer(
-        "Bu buyruq faqat admin uchun!", show_alert=True
-    )
+    await callback.answer("Bu buyruq faqat admin uchun!", show_alert=True)
     return
   await state.set_state(BotStates.waiting_for_broadcast)
   await callback.message.answer(
@@ -336,7 +325,9 @@ async def process_broadcast(message: types.Message, state: FSMContext):
       count += 1
     except Exception:
       pass
-  await message.answer(f"✅ Xabar {count} ta foydalanuvchiga muvaffaqiyatli yetkazildi.")
+  await message.answer(
+      f"✅ Xabar {count} ta foydalanuvchiga muvaffaqiyatli yetkazildi."
+  )
   await state.clear()
 
 
@@ -346,7 +337,6 @@ async def suggestion_handler(callback: types.CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
   lang = user_data.get(user_id, {}).get("lang", "uz")
   await state.set_state(BotStates.waiting_for_suggestion)
-
   msgs = {
       "uz": "💡 Taklif yoki shikoyatingizni yozib yuboring:",
       "en": "💡 Send your suggestion or feedback:",
@@ -360,7 +350,6 @@ async def suggestion_handler(callback: types.CallbackQuery, state: FSMContext):
 async def receive_suggestion(message: types.Message, state: FSMContext):
   user_id = message.from_user.id
   lang = user_data.get(user_id, {}).get("lang", "uz")
-
   suggestion_text = (
       f"💡 Yangi taklif/shikoyat!\n\n👤 Kimdan: @{message.from_user.username}"
       f" (ID: {user_id})\n📝 Xabar: {message.text}"
@@ -369,7 +358,6 @@ async def receive_suggestion(message: types.Message, state: FSMContext):
     await bot.send_message(ADMIN_ID, suggestion_text)
   except Exception:
     pass
-
   msgs = {
       "uz": "✅ Taklifingiz adminga yuborildi. Rahmat!",
       "en": "✅ Your suggestion has been sent to the admin. Thank you!",
@@ -416,7 +404,6 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
   lang = user_data.get(user_id, {}).get("lang", "uz")
   check_and_reset_limits(user_id)
-
   if action == "word":
     if user_data[user_id]["words_count"] >= 30:
       msgs = {
@@ -438,7 +425,6 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
       )
       await callback.answer()
       return
-
     await state.set_state(BotStates.waiting_for_word)
     prompts = {
         "uz": "✍️ Menga istalgan so'z yoki iborani yuboring:",
@@ -446,7 +432,6 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
         "ru": "✍️ Отправьте мне любое слово или фразу для анализа:",
     }
     await callback.message.answer(prompts.get(lang, prompts["uz"]))
-
   elif action == "essay":
     if user_data[user_id]["essays_count"] >= 5:
       msgs = {
@@ -468,7 +453,6 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
       )
       await callback.answer()
       return
-
     await state.set_state(BotStates.waiting_for_essay_topic)
     prompts = {
         "uz": "📝 Esseni tekshirish uchun avval esse mavzusini yuboring:",
@@ -476,7 +460,6 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
         "ru": "📝 Сначала отправьте тему эссе для проверки:",
     }
     await callback.message.answer(prompts.get(lang, prompts["uz"]))
-
   elif action == "idiom":
     if user_id in user_data and user_data[user_id].get("is_active"):
       current_day = user_data[user_id]["day"]
@@ -499,7 +482,6 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
       user_data[user_id]["day"] = 1
       user_data[user_id]["is_active"] = True
       user_data[user_id]["idioms"] = []
-
       msgs = {
           "uz": (
               "🔥 31-Kunlik Idioma Challenge boshlandi! 🏆\n1-kun idiomasi"
@@ -515,7 +497,6 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
       }
       await callback.message.answer(msgs.get(lang, msgs["uz"]))
       asyncio.create_task(send_daily_idiom_for_user(user_id))
-
   elif action == "history":
     if user_id in user_data and user_data[user_id].get("idioms"):
       hist_title = {
@@ -543,7 +524,6 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
           msgs.get(lang, msgs["uz"]),
           reply_markup=get_main_menu(lang, user_id),
       )
-
   elif action == "quiz":
     if user_id in user_data and user_data[user_id].get("idioms"):
       update_request_stats()
@@ -571,7 +551,6 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
           msgs.get(lang, msgs["uz"]),
           reply_markup=get_main_menu(lang, user_id),
       )
-
   await callback.answer()
 
 
@@ -581,7 +560,6 @@ async def send_daily_idiom_for_user(user_id: int):
     while user_id in user_data and user_data[user_id].get("is_active"):
       current_day = user_data[user_id]["day"]
       lang = user_data[user_id].get("lang", "uz")
-
       if current_day > 31:
         user_data[user_id]["is_active"] = False
         ends = {
@@ -591,7 +569,6 @@ async def send_daily_idiom_for_user(user_id: int):
         }
         await bot.send_message(user_id, ends.get(lang, ends["uz"]))
         break
-
       update_request_stats()
       sent_history = user_data[user_id]["idioms"]
       prompt = (
@@ -600,19 +577,15 @@ async def send_daily_idiom_for_user(user_id: int):
           f" '{lang}'. No asterisks (**). Format:\n\n🔥 Day {current_day}\n💬"
           " Idiom: ...\n📖 Meaning: ...\n💡 Example: ..."
       )
-
       completion = groq_client.chat.completions.create(
           model="openai/gpt-oss-120b",
           messages=[{"role": "user", "content": prompt}],
           temperature=0.7,
       )
-
       idiom_text = completion.choices[0].message.content
       await bot.send_message(user_id, idiom_text)
-
       user_data[user_id]["idioms"].append(idiom_text[:50])
       user_data[user_id]["day"] += 1
-
       await asyncio.sleep(86400)
   except Exception as e:
     print(f"Challenge xatosi: {e}")
@@ -624,7 +597,6 @@ async def process_word(message: types.Message, state: FSMContext):
   user_id = message.from_user.id
   lang = user_data.get(user_id, {}).get("lang", "uz")
   check_and_reset_limits(user_id)
-
   if user_data[user_id]["words_count"] >= 30:
     msgs = {
         "uz": "❌ Kunlik so'z tahlil qilish limitingiz tugadi (30/30).",
@@ -636,11 +608,9 @@ async def process_word(message: types.Message, state: FSMContext):
     )
     await state.clear()
     return
-
   user_data[user_id]["words_count"] += 1
   update_request_stats()
   await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-
   try:
     prompt = (
         f"Analyze word: '{message.text}'. Language for output: '{lang}'."
@@ -669,7 +639,6 @@ async def process_essay_topic(message: types.Message, state: FSMContext):
   lang = user_data.get(user_id, {}).get("lang", "uz")
   await state.update_data(essay_topic=message.text)
   await state.set_state(BotStates.waiting_for_essay_photo_or_text)
-
   msgs = {
       "uz": "✅ Mavzu qabul qilindi! Endi esse matnini yoki rasmini yuboring:",
       "en": "✅ Topic received! Now send the essay text or photo:",
@@ -678,13 +647,12 @@ async def process_essay_topic(message: types.Message, state: FSMContext):
   await message.answer(msgs.get(lang, msgs["uz"]))
 
 
-# Esse tekshiruvi (Rasm yoki Matn)
+# Esse tekshiruvi (Rasm yoki Matn) - QAT'IY IELTS EXAMINER REJIMI BILAN YANGILANDI
 @dp.message(BotStates.waiting_for_essay_photo_or_text)
 async def process_essay_submission(message: types.Message, state: FSMContext):
   user_id = message.from_user.id
   lang = user_data.get(user_id, {}).get("lang", "uz")
   check_and_reset_limits(user_id)
-
   if user_data[user_id]["essays_count"] >= 5:
     msgs = {
         "uz": "❌ Kunlik esse tekshirish limitingiz tugadi (5/5).",
@@ -696,15 +664,12 @@ async def process_essay_submission(message: types.Message, state: FSMContext):
     )
     await state.clear()
     return
-
   user_data[user_id]["essays_count"] += 1
   update_request_stats()
   data = await state.get_data()
   topic = data.get("essay_topic", "Topic")
-
   await bot.send_chat_action(chat_id=message.chat.id, action="typing")
   essay_content = ""
-
   if message.photo:
     photo = message.photo[-1]
     file = await bot.get_file(photo.file_id)
@@ -713,21 +678,33 @@ async def process_essay_submission(message: types.Message, state: FSMContext):
     essay_content = message.text
 
   try:
-    prompt = (
-        f"Act as an expert IELTS examiner. Topic: {topic}\nEssay: {essay_content}"
-        f"\nLanguage for response: '{lang}'. Rules: NO asterisks (**). Emojis"
-        " only at the start of lines.\n\nFormat:\n📊 IELTS Band Score: [...]"
-        "\n⭐ Examiner Feedback: [...]\n❌ Mistakes: [...]\n🛠 Improved"
-        " Version: [...]\n💡 Tip: [...]"
+    # QAT'IY IELTS EXAMINER PROMPT VA TEMPERATURE=0.1 QO'SHILDI
+    system_prompt = (
+        "You are an exceptionally strict, uncompromising, and professional official IELTS Examiner. "
+        "Your evaluations must reflect real, rigid IELTS grading standards (Task 2).\n\n"
+        "STRICT RULES:\n"
+        "1. OFF-TOPIC OR GIBBERISH: If the essay does not address the provided topic, is incoherent, contains random text, or is off-topic, you MUST assign a Band Score of 0.0 and explicitly write that it fails the task response criteria.\n"
+        "2. NO INFLATED OR REPETITIVE SCORES: Do NOT give generic high scores (like 7.0) by default. Critically penalize grammatical errors, weak vocabulary, poor coherence, underdeveloped arguments, and word count deficiencies (if under 250 words for Task 2). Scores must realistically range from 3.0 to 9.5 based strictly on performance.\n"
+        f"3. FORMAT & LANGUAGE: Output strictly in language '{lang}'. NO asterisks (**). Use emojis only at the very beginning of lines.\n\n"
+        "Required Output Structure:\n"
+        "📊 IELTS Band Score: [...]\n"
+        "⭐ Detailed Examiner Feedback: [...]\n"
+        "❌ Major Mistakes & Grammar Flaws: [...]\n"
+        "🛠 Improved Academic Version: [...]\n"
+        "💡 Examiner Tip for Higher Band: [...]"
     )
+
+    user_prompt = f"Topic: {topic}\n\nCandidate's Essay: {essay_content}"
 
     completion = groq_client.chat.completions.create(
         model="openai/gpt-oss-120b",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.5,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.1,  # Adolatli va qat'iy baholash uchun past daraja
         max_tokens=2048,
     )
-
     await message.answer(
         completion.choices[0].message.content,
         reply_markup=get_main_menu(lang, user_id),
@@ -746,7 +723,6 @@ async def general_message_handler(message: types.Message):
   user_id = message.from_user.id
   lang = user_data.get(user_id, {}).get("lang", "uz")
   text_lower = message.text.lower()
-
   # 18+ va taqiqlangan so'zlar filtri
   forbidden_words = [
       "porn",
@@ -772,7 +748,6 @@ async def general_message_handler(message: types.Message):
         msgs.get(lang, msgs["uz"]), reply_markup=get_main_menu(lang, user_id)
     )
     return
-
   # Agar foydalanuvchi so'z yoki esse so'ramasdan boshqa narsa yozsa
   msgs = {
       "uz": (
