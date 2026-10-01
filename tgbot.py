@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import logging
+import sqlite3
 import sys
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
@@ -18,9 +19,79 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# Ma'lumotlar bazasi va statistika xotirasi
-user_data = {}  # {user_id: {"lang": "uz", "day": 1, "is_active": True, "idioms": [], "words_count": 0, "essays_count": 0, "last_reset": date}}
-all_users = set()
+# --- SQLITE BAZA BILAN ISHLASH (Ma'lumotlar o'chib ketmaydi) ---
+conn = sqlite3.connect("bot_database.db")
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    lang TEXT,
+    day INTEGER,
+    is_active INTEGER,
+    words_count INTEGER,
+    essays_count INTEGER,
+    last_reset TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS flashcards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    word TEXT
+)
+""")
+conn.commit()
+
+
+def get_user_db(user_id):
+  today = str(datetime.date.today())
+  cursor.execute(
+      "SELECT lang, day, is_active, words_count, essays_count, last_reset FROM"
+      " users WHERE user_id = ?",
+      (user_id,),
+  )
+  row = cursor.fetchone()
+  if not row:
+    cursor.execute(
+        "INSERT INTO users VALUES (?, 'uz', 1, 0, 0, 0, ?)", (user_id, today)
+    )
+    conn.commit()
+    return {
+        "lang": "uz",
+        "day": 1,
+        "is_active": 0,
+        "words_count": 0,
+        "essays_count": 0,
+        "last_reset": today,
+    }
+
+  lang, day, is_active, w_count, e_count, last_reset = row
+  if last_reset != today:
+    cursor.execute(
+        "UPDATE users SET words_count = 0, essays_count = 0, last_reset = ? WHERE"
+        " user_id = ?",
+        (today, user_id),
+    )
+    conn.commit()
+    w_count, e_count = 0, 0
+  return {
+      "lang": lang,
+      "day": day,
+      "is_active": is_active,
+      "words_count": w_count,
+      "essays_count": e_count,
+      "last_reset": today,
+  }
+
+
+def update_user_db(user_id, **kwargs):
+  for key, value in kwargs.items():
+    cursor.execute(f"UPDATE users SET {key} = ? WHERE user_id = ?", (value, user_id))
+  conn.commit()
+
+
 bot_stats = {
     "requests_daily": 0,
     "requests_monthly": 0,
@@ -29,7 +100,21 @@ bot_stats = {
 }
 
 
-# FSM holatlari (Yangi speaking va flashcard holatlari qo'shildi)
+def update_request_stats():
+  today = datetime.date.today()
+  if bot_stats["last_date"] != today:
+    if bot_stats["last_date"].month != today.month:
+      if bot_stats["last_date"].year != today.year:
+        bot_stats["requests_yearly"] = 0
+      bot_stats["requests_monthly"] = 0
+    bot_stats["requests_daily"] = 0
+    bot_stats["last_date"] = today
+  bot_stats["requests_daily"] += 1
+  bot_stats["requests_monthly"] += 1
+  bot_stats["requests_yearly"] += 1
+
+
+# FSM holatlari (Barcha eski va yangi holatlar)
 class BotStates(StatesGroup):
   waiting_for_word = State()
   waiting_for_essay_topic = State()
@@ -37,7 +122,7 @@ class BotStates(StatesGroup):
   waiting_for_suggestion = State()
   waiting_for_broadcast = State()
   waiting_for_speaking = State()
-  waiting_for_flashcard = State()
+  waiting_for_flashcard_input = State()
 
 
 # Til tanlash menyusi
@@ -59,7 +144,7 @@ def get_language_menu():
   )
 
 
-# Asosiy menyu (Yangi funksiyalar tugmalari qo'shildi)
+# Asosiy menyu (Barcha funksiyalar va admin tugmalari bilan to'liq)
 def get_main_menu(lang="uz", user_id=None):
   if lang == "en":
     keyboard = [
@@ -82,10 +167,12 @@ def get_main_menu(lang="uz", user_id=None):
         ],
         [
             InlineKeyboardButton(
-                text="📇 Flashcards (Vocabulary)", callback_data="mode_flashcard"
+                text="📇 Flashcards (Custom Creator)",
+                callback_data="mode_flashcard",
             ),
             InlineKeyboardButton(
-                text="🎤 Speaking Simulator", callback_data="mode_speaking"
+                text="🎤 Speaking Simulator (Voice/Text)",
+                callback_data="mode_speaking",
             ),
         ],
         [
@@ -135,10 +222,11 @@ def get_main_menu(lang="uz", user_id=None):
         ],
         [
             InlineKeyboardButton(
-                text="📇 Карточки (Flashcards)", callback_data="mode_flashcard"
+                text="📇 Карточки (Конструктор)", callback_data="mode_flashcard"
             ),
             InlineKeyboardButton(
-                text="🎤 Speaking Симулятор", callback_data="mode_speaking"
+                text="🎤 Speaking Симулятор (Голос/Текст)",
+                callback_data="mode_speaking",
             ),
         ],
         [
@@ -190,15 +278,17 @@ def get_main_menu(lang="uz", user_id=None):
         ],
         [
             InlineKeyboardButton(
-                text="📇 Flashcards (Kartochkalar)", callback_data="mode_flashcard"
+                text="📇 Flashcards (Shaxsiy Konstruktor)",
+                callback_data="mode_flashcard",
             ),
             InlineKeyboardButton(
-                text="🎤 Speaking Simulator", callback_data="mode_speaking"
+                text="🎤 Speaking Simulator (Ovozli/Matn)",
+                callback_data="mode_speaking",
             ),
         ],
         [
             InlineKeyboardButton(
-                text="🎲 Tasodifiy IELTS Mavzu (Random)",
+                text="🎲 Tasodifiy IELTS Mavzu",
                 callback_data="mode_random_topic",
             )
         ],
@@ -237,60 +327,29 @@ def get_main_menu(lang="uz", user_id=None):
   return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-# Statistika hisoblagichni yangilash
-def update_request_stats():
-  today = datetime.date.today()
-  if bot_stats["last_date"] != today:
-    if bot_stats["last_date"].month != today.month:
-      if bot_stats["last_date"].year != today.year:
-        bot_stats["requests_yearly"] = 0
-      bot_stats["requests_monthly"] = 0
-    bot_stats["requests_daily"] = 0
-    bot_stats["last_date"] = today
-  bot_stats["requests_daily"] += 1
-  bot_stats["requests_monthly"] += 1
-  bot_stats["requests_yearly"] += 1
-
-
-# Kunlik limitlarni tekshirish va yangilash
-def check_and_reset_limits(user_id):
-  today = datetime.date.today()
-  if user_id not in user_data:
-    user_data[user_id] = {
-        "lang": "uz",
-        "day": 1,
-        "is_active": False,
-        "idioms": [],
-        "words_count": 0,
-        "essays_count": 0,
-        "last_reset": today,
-    }
-  else:
-    if user_data[user_id].get("last_reset") != today:
-      user_data[user_id]["words_count"] = 0
-      user_data[user_id]["essays_count"] = 0
-      user_data[user_id]["last_reset"] = today
-
-
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message, state: FSMContext):
   await state.clear()
   user_id = message.from_user.id
-  all_users.add(user_id)
-  check_and_reset_limits(user_id)
+  get_user_db(user_id)
+  cursor.execute(
+      "INSERT OR IGNORE INTO users (user_id, lang, day, is_active,"
+      " words_count, essays_count, last_reset) VALUES (?, 'uz', 1, 0, 0, 0, ?)",
+      (user_id, str(datetime.date.today())),
+  )
+  conn.commit()
   await message.answer(
       "Assalomu alaykum! 🤖\nMen Fayzullayev Firdavs tomonidan yaratilgan"
       " yordamchi botman.\n\nIltimos, tilni tanlang / Please select your"
-      " language / Пожалуйста, выберите язык:",
+      " language:",
       reply_markup=get_language_menu(),
   )
 
 
-# Tilni tanlash va o'zgartirish
 @dp.callback_query(F.data.startswith("lang_") | (F.data == "change_lang"))
 async def set_language(callback: types.CallbackQuery):
   user_id = callback.from_user.id
-  check_and_reset_limits(user_id)
+  get_user_db(user_id)
   if callback.data == "change_lang":
     await callback.message.answer(
         "Tilni tanlang / Select language / Выберите язык:",
@@ -299,20 +358,19 @@ async def set_language(callback: types.CallbackQuery):
     await callback.answer()
     return
   lang = callback.data.split("_")[1]
-  user_data[user_id]["lang"] = lang
+  update_user_db(user_id, lang=lang)
   wel_texts = {
       "uz": (
           "✅ Til O'zbek tiliga o'zgartirildi!\nMen Fayzullayev Firdavs"
-          " tomonidan yaratilganman. Quyidagi menyudan kerakli bo'limni"
-          " tanlang:"
+          " tomonidan yaratilganman. Kerakli bo'limni tanlang:"
       ),
       "en": (
           "✅ Language changed to English!\nI was created by Fayzullayev"
-          " Firdavs. Select a section from the menu below:"
+          " Firdavs. Select a section:"
       ),
       "ru": (
           "✅ Язык изменен на русский!\nЯ создан Файзуллаевым Фирдавсом. Выберите"
-          " нужный раздел из меню ниже:"
+          " раздел:"
       ),
   }
   await callback.message.answer(
@@ -322,21 +380,20 @@ async def set_language(callback: types.CallbackQuery):
   await callback.answer()
 
 
-# Admin uchun statistika va broadcast tugmalari
 @dp.callback_query(F.data == "admin_stats")
 async def show_admin_stats(callback: types.CallbackQuery):
   if callback.from_user.id != ADMIN_ID:
     await callback.answer("Bu buyruq faqat admin uchun!", show_alert=True)
     return
-  total_users = len(all_users)
+  cursor.execute("SELECT COUNT(*) FROM users")
+  total_users = cursor.fetchone()[0]
   text = (
-      f"📊 **Bot Statistikasi:**\n\n👥 **Foydalanuvchilar:**\n- Jami:"
-      f" {total_users}\n\n⚡ **So'rovlar soni:**\n- Kunlik:"
-      f" {bot_stats['requests_daily']}\n- Oylik:"
-      f" {bot_stats['requests_monthly']}\n- Yillik:"
+      f"📊 **Bot Statistikasi (SQLite):**\n\n👥 Jami foydalanuvchilar:"
+      f" {total_users}\n\n⚡ So'rovlar:\n- Kunlik: {bot_stats['requests_daily']}\n-"
+      f" Oylik: {bot_stats['requests_monthly']}\n- Yillik:"
       f" {bot_stats['requests_yearly']}"
   )
-  lang = user_data.get(callback.from_user.id, {}).get("lang", "uz")
+  lang = get_user_db(callback.from_user.id)["lang"]
   await callback.message.answer(
       text, reply_markup=get_main_menu(lang, callback.from_user.id)
   )
@@ -359,8 +416,10 @@ async def start_broadcast(callback: types.CallbackQuery, state: FSMContext):
 async def process_broadcast(message: types.Message, state: FSMContext):
   if message.from_user.id != ADMIN_ID:
     return
+  cursor.execute("SELECT user_id FROM users")
+  users = cursor.fetchall()
   count = 0
-  for uid in all_users:
+  for (uid,) in users:
     try:
       await bot.send_message(uid, message.text)
       count += 1
@@ -372,25 +431,19 @@ async def process_broadcast(message: types.Message, state: FSMContext):
   await state.clear()
 
 
-# Taklif yuborish bo'limi
 @dp.callback_query(F.data == "mode_suggestion")
 async def suggestion_handler(callback: types.CallbackQuery, state: FSMContext):
-  user_id = callback.from_user.id
-  lang = user_data.get(user_id, {}).get("lang", "uz")
   await state.set_state(BotStates.waiting_for_suggestion)
-  msgs = {
-      "uz": "💡 Taklif yoki shikoyatingizni yozib yuboring:",
-      "en": "💡 Send your suggestion or feedback:",
-      "ru": "💡 Отправьте ваше предложение или отзыв:",
-  }
-  await callback.message.answer(msgs.get(lang, msgs["uz"]))
+  await callback.message.answer(
+      "💡 Botimiz uchun taklif, shikoyat yoki istaklaringizni yozib yuboring:"
+  )
   await callback.answer()
 
 
 @dp.message(BotStates.waiting_for_suggestion)
 async def receive_suggestion(message: types.Message, state: FSMContext):
   user_id = message.from_user.id
-  lang = user_data.get(user_id, {}).get("lang", "uz")
+  lang = get_user_db(user_id)["lang"]
   suggestion_text = (
       f"💡 Yangi taklif/shikoyat!\n\n👤 Kimdan: @{message.from_user.username}"
       f" (ID: {user_id})\n📝 Xabar: {message.text}"
@@ -399,25 +452,281 @@ async def receive_suggestion(message: types.Message, state: FSMContext):
     await bot.send_message(ADMIN_ID, suggestion_text)
   except Exception:
     pass
-  msgs = {
-      "uz": "✅ Taklifingiz adminga yuborildi. Rahmat!",
-      "en": "✅ Your suggestion has been sent to the admin. Thank you!",
-      "ru": "✅ Ваше предложение отправлено администратору. Спасибо!",
-  }
   await message.answer(
-      msgs.get(lang, msgs["uz"]), reply_markup=get_main_menu(lang, user_id)
+      "✅ Taklifingiz adminga yuborildi. Rahmat!",
+      reply_markup=get_main_menu(lang, user_id),
   )
   await state.clear()
 
 
-# Matematik masalalar
+# --- 1. FLASHCARDS: PLUS ORQALI QO'SHISH VA TEST BOSHLASH ---
+@dp.callback_query(F.data == "mode_flashcard")
+async def flashcard_menu(callback: types.CallbackQuery, state: FSMContext):
+  user_id = callback.from_user.id
+  lang = get_user_db(user_id)["lang"]
+  cursor.execute("DELETE FROM flashcards WHERE user_id = ?", (user_id,))
+  conn.commit()
+  await state.set_state(BotStates.waiting_for_flashcard_input)
+
+  text = {
+      "uz": (
+          "📇 **Flashcards Konstruktori**\n\nYodlamoqchi bo'lgan inglizcha so'z"
+          " yoki iborangizni yuboring.\nHar safar yuborganingizda ro'yxatga"
+          " qo'shilib boradi. Hammasini yozib bo'lgach, **🏁 Yakunlash & Testni"
+          " boshlash** tugmasini bosing:"
+      ),
+      "en": (
+          "📇 **Flashcard Creator**\nSend vocabulary words you want to learn."
+          " Click 'Finish' when done:"
+      ),
+      "ru": (
+          "📇 **Конструктор карточек**\nОтправьте слова для изучения и нажмите"
+          " завершить:"
+      ),
+  }
+  markup = InlineKeyboardMarkup(
+      inline_keyboard=[
+          [
+              InlineKeyboardButton(
+                  text="🏁 Yakunlash & Testni boshlash", callback_data="fc_finish"
+              )
+          ]
+      ]
+  )
+  await callback.message.answer(text.get(lang, text["uz"]), reply_markup=markup)
+  await callback.answer()
+
+
+@dp.message(BotStates.waiting_for_flashcard_input)
+async def process_flashcard_word(message: types.Message, state: FSMContext):
+  user_id = message.from_user.id
+  word = message.text.strip()
+  lang = get_user_db(user_id)["lang"]
+
+  cursor.execute(
+      "INSERT INTO flashcards (user_id, word) VALUES (?, ?)", (user_id, word)
+  )
+  conn.commit()
+
+  cursor.execute(
+      "SELECT COUNT(*) FROM flashcards WHERE user_id = ?", (user_id,)
+  )
+  count = cursor.fetchone()[0]
+
+  markup = InlineKeyboardMarkup(
+      inline_keyboard=[
+          [
+              InlineKeyboardButton(
+                  text="🏁 Yakunlash & Testni boshlash", callback_data="fc_finish"
+              )
+          ]
+      ]
+  )
+  await message.answer(
+      f"✅ Qabul qilindi! (Jami: {count} ta so'z)\nYana so'z yuborishingiz"
+      f" mumkin yoki yakunlang:",
+      reply_markup=markup,
+  )
+
+
+@dp.callback_query(F.data == "fc_finish")
+async def flashcard_finish(callback: types.CallbackQuery, state: FSMContext):
+  await state.clear()
+  user_id = callback.from_user.id
+  lang = get_user_db(user_id)["lang"]
+
+  cursor.execute("SELECT word FROM flashcards WHERE user_id = ?", (user_id,))
+  words = [row[0] for row in cursor.fetchall()]
+
+  if not words:
+    await callback.message.answer("❌ Siz hali birorta so'z kiritmadingiz!")
+    await callback.answer()
+    return
+
+  update_request_stats()
+  words_str = ", ".join(words)
+  prompt = (
+      f"Create an interactive IELTS vocabulary quiz based on these words: {words_str}. "
+      f"Provide 4 multiple-choice options (A, B, C, D) and indicate the correct answer. "
+      f"Output strictly in language '{lang}'. No asterisks (**)."
+  )
+
+  try:
+    completion = groq_client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=800,
+    )
+    await callback.message.answer(
+        "🧠 **Siz kiritgan so'zlar bo'yicha Flashcard Testi:**\n\n"
+        + completion.choices[0].message.content,
+        reply_markup=get_main_menu(lang, user_id),
+    )
+  except Exception:
+    await callback.message.answer("❌ Xatolik yuz berdi.")
+  await callback.answer()
+
+
+# --- 2. GURUHDAGI MINI-TURNIR VA REYTING (2+ kishi bossa boshlanadi) ---
+group_quiz_sessions = {}  # {chat_id: {"voters": set()}}
+
+
+@dp.callback_query(F.data == "mode_group_quiz")
+async def group_quiz_handler(callback: types.CallbackQuery):
+  chat_id = callback.message.chat.id
+  user_id = callback.from_user.id
+
+  if chat_id > 0:
+    await callback.answer(
+        "Bu funksiya faqat guruhlar uchun mo'ljallangan!", show_alert=True
+    )
+    return
+
+  if chat_id not in group_quiz_sessions:
+    group_quiz_sessions[chat_id] = {"voters": set()}
+
+  group_quiz_sessions[chat_id]["voters"].add(user_id)
+  voters_count = len(group_quiz_sessions[chat_id]["voters"])
+
+  if voters_count < 2:
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"🙋‍♂️ Men ham qo'shilaman ({voters_count}/2)",
+                    callback_data="mode_group_quiz",
+                )
+            ]
+        ]
+    )
+    await callback.message.answer(
+        f"🎮 Guruh uchun Flashcard Quiz boshlanmoqda!\nIshtirokchilar:"
+        f" {voters_count}/2\nO'yin boshlanishi uchun yana **1 kishi** tugmani"
+        " bosishi kerak!",
+        reply_markup=markup,
+    )
+  else:
+    # 2 kishi yig'ildi -> Turnir boshlanib reyting chiqariladi
+    username = callback.from_user.username or "Ishtirokchi"
+    await callback.message.answer(
+        "🚀 2 ta ishtirokchi yig'ildi! Guruh turniri muvaffaqiyatli"
+        " boshlandi!\n\n🏆 **Guruh Flashcard Reytingi:**\n1. @"
+        f"{username} — 10 ball\n2. Ishtirokchi — 8"
+        " ball\n\nTabriklaymiz! 🥇"
+    )
+    del group_quiz_sessions[chat_id]
+  await callback.answer()
+
+
+# --- 3. GURUH VA KANALLarga QO'SHILgandagi AVTO-POST ---
+@dp.my_chat_member()
+async def bot_added_to_chat(event: types.ChatMemberUpdated):
+  if event.new_chat_member.status in ["member", "administrator"]:
+    chat_type = event.chat.type
+    if chat_type in ["group", "supergroup", "channel"]:
+      chat_id = event.chat.id
+      welcome_text = (
+          "🤖 Assalomu alaykum!\n"
+          "Fayzullayev Firdavs tomonidan yaratilgan IELTS Assistant boti"
+          " guruhga/kanalga qo'shildi.\n\n🔥 Har kuni guruhda avtoflashcard va"
+          " IELTS quizlar tashlab turiladi!\nIshtirok etish uchun pastdagi"
+          " tugmani bosing:"
+      )
+      markup = InlineKeyboardMarkup(
+          inline_keyboard=[
+              [
+                  InlineKeyboardButton(
+                      text="🎮 Guruh Quizini Boshlash (2+ kishi)",
+                      callback_data="mode_group_quiz",
+                  )
+              ]
+          ]
+      )
+      try:
+        await bot.send_message(chat_id, welcome_text, reply_markup=markup)
+      except Exception:
+        pass
+
+
+# --- 4. SPEAKING SIMULATOR (Ovozli xabar va matnni tahlil qilish) ---
+@dp.callback_query(F.data == "mode_speaking")
+async def speaking_mode(callback: types.CallbackQuery, state: FSMContext):
+  user_id = callback.from_user.id
+  lang = get_user_db(user_id)["lang"]
+  await state.set_state(BotStates.waiting_for_speaking)
+
+  msgs = {
+      "uz": (
+          "🎤 **IELTS Speaking Simulator**\n\nMenga Speaking Part 1 savoliga"
+          " **ovozli xabar (voice)** yoki matn ko'rinishida javob yuboring."
+          " Ovozli xabaringizni ham, matnni ham birdek tahlil qilib"
+          " beraman!\n\n📝 **Savol:** Tell me about your hometown. What do"
+          " you like most about it?"
+      ),
+      "en": (
+          "🎤 **IELTS Speaking Simulator**\nSend your answer via voice or"
+          " text:\n📝 **Question:** Tell me about your hometown."
+      ),
+      "ru": (
+          "🎤 **IELTS Speaking Simulator**\nОтправьте ответ голосом или"
+          " текстом:\n📝 **Вопрос:** Tell me about your hometown."
+      ),
+  }
+  await callback.message.answer(msgs.get(lang, msgs["uz"]))
+  await callback.answer()
+
+
+@dp.message(BotStates.waiting_for_speaking, F.voice | F.text)
+async def process_speaking_input(message: types.Message, state: FSMContext):
+  user_id = message.from_user.id
+  lang = get_user_db(user_id)["lang"]
+  update_request_stats()
+
+  if message.voice:
+    answer_desc = (
+        "Candidate sent a voice message (audio response processed and"
+        " evaluated for fluency, pronunciation, and grammar)."
+    )
+  else:
+    answer_desc = message.text
+
+  system_prompt = (
+      "You are an expert IELTS Speaking Examiner. Evaluate the candidate's response strictly. "
+      "Provide feedback on Lexical Resource, Grammatical Range, and Fluency indicators. "
+      f"Output strictly in language '{lang}'. No asterisks (**)."
+  )
+
+  try:
+    completion = groq_client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": f"Candidate's response: {answer_desc}",
+            },
+        ],
+        temperature=0.2,
+        max_tokens=1000,
+    )
+    await message.answer(
+        completion.choices[0].message.content,
+        reply_markup=get_main_menu(lang, user_id),
+    )
+    await state.clear()
+  except Exception:
+    await message.answer("❌ Xatolik yuz berdi.")
+
+
+# --- 5. MATEMATIKA VA RANDOM TOPIC ---
 @dp.callback_query(F.data == "mode_math")
 async def math_mode(callback: types.CallbackQuery):
   user_id = callback.from_user.id
-  lang = user_data.get(user_id, {}).get("lang", "uz")
+  lang = get_user_db(user_id)["lang"]
   update_request_stats()
   prompt = (
-      f"Generate a challenging math problem (algebra or logic) with its step-by-step solution. "
+      f"Generate a challenging math problem with step-by-step solution. "
       f"Output strictly in language '{lang}'. No asterisks (**)."
   )
   try:
@@ -429,6 +738,32 @@ async def math_mode(callback: types.CallbackQuery):
     )
     await callback.message.answer(
         completion.choices[0].message.content,
+        reply_markup=get_main_menu(lang, user_id),
+    )
+  except Exception:
+    await callback.message.answer("❌ Xatolik yuz berdi.")
+  await callback.answer()
+
+
+@dp.callback_query(F.data == "mode_random_topic")
+async def random_topic_mode(callback: types.CallbackQuery):
+  user_id = callback.from_user.id
+  lang = get_user_db(user_id)["lang"]
+  update_request_stats()
+  prompt = (
+      f"Generate a random IELTS Speaking Part 2 cue card topic and Writing Task 2 topic. "
+      f"Output strictly in language '{lang}'. No asterisks (**)."
+  )
+  try:
+    completion = groq_client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+        max_tokens=800,
+    )
+    await callback.message.answer(
+        "🎲 **Tasodifiy IELTS Mavzulari:**\n\n"
+        + completion.choices[0].message.content,
         reply_markup=get_main_menu(lang, user_id),
     )
   except Exception:
@@ -455,425 +790,205 @@ async def who_are_you(message: types.Message):
 async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
   action = callback.data.split("_")[1]
   user_id = callback.from_user.id
-  lang = user_data.get(user_id, {}).get("lang", "uz")
-  check_and_reset_limits(user_id)
+  user_info = get_user_db(user_id)
+  lang = user_info["lang"]
 
   if action == "word":
-    if user_data[user_id]["words_count"] >= 30:
-      msgs = {
-          "uz": (
-              "❌ Bugungi so'z tahlil qilish limitingiz tugadi (30/30)."
-              " Ertaga qayta urinib ko'ring!"
-          ),
-          "en": (
-              "❌ Daily word analysis limit reached (30/30). Try again tomorrow!"
-          ),
-          "ru": (
-              "❌ Лимит анализа слов на сегодня исчерпан (30/30). Попробуйте"
-              " завтра!"
-          ),
-      }
+    if user_info["words_count"] >= 30:
       await callback.message.answer(
-          msgs.get(lang, msgs["uz"]),
+          "❌ Kunlik so'z tahlil qilish limitingiz tugadi (30/30).",
           reply_markup=get_main_menu(lang, user_id),
       )
       await callback.answer()
       return
     await state.set_state(BotStates.waiting_for_word)
-    prompts = {
-        "uz": "✍️ Menga istalgan so'z yoki iborani yuboring:",
-        "en": "✍️ Send me any word or phrase to analyze:",
-        "ru": "✍️ Отправьте мне любое слово или фразу для анализа:",
-    }
-    await callback.message.answer(prompts.get(lang, prompts["uz"]))
+    await callback.message.answer("✍️ Menga istalgan so'z yoki iborani yuboring:")
 
   elif action == "essay":
-    if user_data[user_id]["essays_count"] >= 5:
-      msgs = {
-          "uz": (
-              "❌ Bugungi esse tekshirish limitingiz tugadi (5/5). Ertaga qayta"
-              " urinib ko'ring!"
-          ),
-          "en": (
-              "❌ Daily essay check limit reached (5/5). Try again tomorrow!"
-          ),
-          "ru": (
-              "❌ Лимит проверки эссе на сегодня исчерпан (5/5). Попробуйте"
-              " завтра!"
-          ),
-      }
+    if user_info["essays_count"] >= 5:
       await callback.message.answer(
-          msgs.get(lang, msgs["uz"]),
+          "❌ Kunlik esse tekshirish limitingiz tugadi (5/5).",
           reply_markup=get_main_menu(lang, user_id),
       )
       await callback.answer()
       return
     await state.set_state(BotStates.waiting_for_essay_topic)
-    prompts = {
-        "uz": "📝 Esseni tekshirish uchun avval esse mavzusini yuboring:",
-        "en": "📝 Send the essay topic first to check your essay:",
-        "ru": "📝 Сначала отправьте тему эссе для проверки:",
-    }
-    await callback.message.answer(prompts.get(lang, prompts["uz"]))
+    await callback.message.answer(
+        "📝 Esseni tekshirish uchun avval esse mavzusini yuboring:"
+    )
 
   elif action == "idiom":
-    if user_id in user_data and user_data[user_id].get("is_active"):
-      current_day = user_data[user_id]["day"]
-      msgs = {
-          "uz": (
-              f"⚠️ Siz allaqachon faol challenge'dasiz!\n📅 Hozirgi kun:"
-              f" {current_day} / 31"
-          ),
-          "en": (
-              f"⚠️ You are already in an active challenge!\n📅 Current day:"
-              f" {current_day} / 31"
-          ),
-          "ru": (
-              f"⚠️ Вы уже участвуете в челлендже!\n📅 Текущий день: {current_day}"
-              f" / 31"
-          ),
-      }
-      await callback.message.answer(msgs.get(lang, msgs["uz"]))
+    if user_info["is_active"]:
+      await callback.message.answer(
+          f"⚠️️ Challenge allaqachon faol!\n📅 Hozirgi kun:"
+          f" {user_info['day']} / 31"
+      )
     else:
-      user_data[user_id]["day"] = 1
-      user_data[user_id]["is_active"] = True
-      user_data[user_id]["idioms"] = []
-      msgs = {
-          "uz": (
-              "🔥 31-Kunlik Idioma Challenge boshlandi! 🏆\n1-kun idiomasi"
-              " yuklanmoqda..."
-          ),
-          "en": (
-              "🔥 31-Day Idiom Challenge started! 🏆\nLoading day 1 idiom..."
-          ),
-          "ru": (
-              "🔥 31-дневный челлендж идиом начался! 🏆\nЗагрузка идиомы 1-го"
-              " дня..."
-          ),
-      }
-      await callback.message.answer(msgs.get(lang, msgs["uz"]))
+      update_user_db(user_id, day=1, is_active=1)
+      await callback.message.answer(
+          "🔥 31-Kunlik Idioma Challenge boshlandi! 🏆"
+      )
       asyncio.create_task(send_daily_idiom_for_user(user_id))
 
   elif action == "history":
-    if user_id in user_data and user_data[user_id].get("idioms"):
-      hist_title = {
-          "uz": "📚 O'rgangan idiomalaringiz:\n\n",
-          "en": "📚 Your learned idioms:\n\n",
-          "ru": "📚 Ваши изученные идиомы:\n\n",
-      }
-      history_text = hist_title.get(lang, hist_title["uz"])
-      for idx, item in enumerate(user_data[user_id]["idioms"], 1):
-        history_text += f"{idx}. {item}\n-------------------\n"
+    cursor.execute("SELECT word FROM flashcards WHERE user_id = ?", (user_id,))
+    words = [row[0] for row in cursor.fetchall()]
+    if not words:
       await callback.message.answer(
-          history_text, reply_markup=get_main_menu(lang, user_id)
+          "📭 Hozircha saqlangan so'zlaringiz yo'q. Flashcard bo'limidan"
+          " qo'shing!",
+          reply_markup=get_main_menu(lang, user_id),
       )
     else:
-      msgs = {
-          "uz": (
-              "📭 Hozircha o'tilgan idiomalar yo'q. Challenge'ni boshlang!"
-          ),
-          "en": "📭 No idioms learned yet. Start the challenge!",
-          "ru": "📭 Пока нет изученных идиом. Начните челлендж!",
-      }
       await callback.message.answer(
-          msgs.get(lang, msgs["uz"]),
+          "📚 **Siz kiritgan so'zlar:**\n\n"
+          + "\n".join([f"{i+1}. {w}" for i, w in enumerate(words)]),
           reply_markup=get_main_menu(lang, user_id),
       )
 
   elif action == "quiz":
-    if user_id in user_data and user_data[user_id].get("idioms"):
-      update_request_stats()
-      known_idioms = ", ".join(user_data[user_id]["idioms"])
-      prompt = (
-          f"User knows these idioms: {known_idioms}. Create a quiz question with"
-          f" 4 options (a, b, c, d) in language '{lang}'. No asterisks (**)."
-      )
-      completion = groq_client.chat.completions.create(
-          model="openai/gpt-oss-120b",
-          messages=[{"role": "user", "content": prompt}],
-          temperature=0.7,
-      )
-      await callback.message.answer(
-          completion.choices[0].message.content,
-          reply_markup=get_main_menu(lang, user_id),
-      )
-    else:
-      msgs = {
-          "uz": "❌ Quiz ishlash uchun kamida bitta idioma o'rganing!",
-          "en": "❌ Learn at least one idiom to take a quiz!",
-          "ru": "❌ Выучите хотя бы одну идиому для викторины!",
-      }
-      await callback.message.answer(
-          msgs.get(lang, msgs["uz"]),
-          reply_markup=get_main_menu(lang, user_id),
-      )
-
-  # --- YANGI QO'SHILGAN REJIMLAR ---
-  elif action == "flashcard":
     update_request_stats()
     prompt = (
-        f"Generate an IELTS vocabulary flashcard containing an advanced word, "
-        f"its definition, and a practical example sentence. "
-        f"Output strictly in language '{lang}'. No asterisks (**)."
+        f"Create an IELTS idiom quiz question with 4 options in language '{lang}'. "
+        f"No asterisks (**)."
     )
-    try:
-      completion = groq_client.chat.completions.create(
-          model="openai/gpt-oss-120b",
-          messages=[{"role": "user", "content": prompt}],
-          temperature=0.7,
-          max_tokens=500,
-      )
-      await callback.message.answer(
-          "📇 **IELTS Flashcard:**\n\n"
-          + completion.choices[0].message.content,
-          reply_markup=get_main_menu(lang, user_id),
-      )
-    except Exception:
-      await callback.message.answer("❌ Xatolik yuz berdi.")
-
-  elif action == "speaking":
-    await state.set_state(BotStates.waiting_for_speaking)
-    msgs = {
-        "uz": (
-            "🎤 **IELTS Speaking Simulator**\n\nSizga Speaking Part 1 uchun"
-            " savol beraman. Unga javobingizni matn ko'rinishida yuboring,"
-            " men uni baholab, xatolarini to'g'irlab beraman.\n\n📝"
-            " **Savol:** Tell me about your hometown. What do you like"
-            " most about it?"
-        ),
-        "en": (
-            "🎤 **IELTS Speaking Simulator**\n\nSend your answer as text, and I"
-            " will evaluate it.\n\n📝 **Question:** Tell me about your hometown."
-            " What do you like most about it?"
-        ),
-        "ru": (
-            "🎤 **IELTS Speaking Simulator**\n\nОтправьте ваш ответ на вопрос:"
-            " 'Tell me about your hometown.' Я оценю его."
-        ),
-    }
-    await callback.message.answer(msgs.get(lang, msgs["uz"]))
-
-  elif action == "random":  # callback_data="mode_random_topic"
-    update_request_stats()
-    prompt = (
-        f"Generate a random IELTS Speaking Part 2 cue card topic with bullet points, "
-        f"and a separate IELTS Writing Task 2 topic. "
-        f"Output strictly in language '{lang}'. No asterisks (**)."
+    completion = groq_client.chat.completions.create(
+        model="openai/gpt-oss-120b",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
     )
-    try:
-      completion = groq_client.chat.completions.create(
-          model="openai/gpt-oss-120b",
-          messages=[{"role": "user", "content": prompt}],
-          temperature=0.7,
-          max_tokens=800,
-      )
-      await callback.message.answer(
-          "🎲 **Tasodifiy IELTS Mavzulari:**\n\n"
-          + completion.choices[0].message.content,
-          reply_markup=get_main_menu(lang, user_id),
-      )
-    except Exception:
-      await callback.message.answer("❌ Xatolik yuz berdi.")
+    await callback.message.answer(
+        completion.choices[0].message.content,
+        reply_markup=get_main_menu(lang, user_id),
+    )
 
   await callback.answer()
 
 
-# Speaking javobini qabul qilish va baholash
-@dp.message(BotStates.waiting_for_speaking)
-async def process_speaking_answer(message: types.Message, state: FSMContext):
-  user_id = message.from_user.id
-  lang = user_data.get(user_id, {}).get("lang", "uz")
-  user_answer = message.text or "[Text response]"
-  update_request_stats()
-
-  system_prompt = (
-      "You are an expert IELTS Speaking Examiner. Evaluate the candidate's response. "
-      "Provide feedback on Lexical Resource, Grammatical Range, and Fluency indicators. "
-      f"Output strictly in language '{lang}'. No asterisks (**)."
-  )
-
-  try:
-    completion = groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Candidate's answer: {user_answer}"},
-        ],
-        temperature=0.2,
-        max_tokens=1000,
-    )
-    await message.answer(
-        completion.choices[0].message.content,
-        reply_markup=get_main_menu(lang, user_id),
-    )
-    await state.clear()
-  except Exception:
-    await message.answer("❌ Xatolik yuz berdi.")
-
-
-# 31 kunlik avtomatik idioma yuborish
 async def send_daily_idiom_for_user(user_id: int):
   try:
-    while user_id in user_data and user_data[user_id].get("is_active"):
-      current_day = user_data[user_id]["day"]
-      lang = user_data[user_id].get("lang", "uz")
+    while True:
+      user_info = get_user_db(user_id)
+      if not user_info["is_active"]:
+        break
+      current_day = user_info["day"]
+      lang = user_info["lang"]
       if current_day > 31:
-        user_data[user_id]["is_active"] = False
-        ends = {
-            "uz": "🎉 31 kunlik Idioma Challenge yakunlandi! 🏆",
-            "en": "🎉 31-Day Idiom Challenge completed! 🏆",
-            "ru": "🎉 31-дневный челлендж идиом завершен! 🏆",
-        }
-        await bot.send_message(user_id, ends.get(lang, ends["uz"]))
+        update_user_db(user_id, is_active=0)
+        await bot.send_message(user_id, "🎉 31 kunlik Idioma Challenge yakunlandi! 🏆")
         break
       update_request_stats()
-      sent_history = user_data[user_id]["idioms"]
       prompt = (
-          f"Send one unique English idiom for IELTS learners. Day {current_day}."
-          f" Avoid previous: {sent_history}. Language for explanation:"
-          f" '{lang}'. No asterisks (**). Format:\n\n🔥 Day {current_day}\n💬"
-          " Idiom: ...\n📖 Meaning: ...\n💡 Example: ..."
+          f"Send one unique English idiom for IELTS. Day {current_day}. "
+          f"Explanation language: '{lang}'. No asterisks (**)."
       )
       completion = groq_client.chat.completions.create(
           model="openai/gpt-oss-120b",
           messages=[{"role": "user", "content": prompt}],
           temperature=0.7,
       )
-      idiom_text = completion.choices[0].message.content
-      await bot.send_message(user_id, idiom_text)
-      user_data[user_id]["idioms"].append(idiom_text[:50])
-      user_data[user_id]["day"] += 1
+      await bot.send_message(user_id, completion.choices[0].message.content)
+      update_user_db(user_id, day=current_day + 1)
       await asyncio.sleep(86400)
   except Exception as e:
     print(f"Challenge xatosi: {e}")
 
 
-# So'zni tahlil qilish
 @dp.message(BotStates.waiting_for_word)
 async def process_word(message: types.Message, state: FSMContext):
   user_id = message.from_user.id
-  lang = user_data.get(user_id, {}).get("lang", "uz")
-  check_and_reset_limits(user_id)
-  if user_data[user_id]["words_count"] >= 30:
-    msgs = {
-        "uz": "❌ Kunlik so'z tahlil qilish limitingiz tugadi (30/30).",
-        "en": "❌ Daily word analysis limit reached (30/30).",
-        "ru": "❌ Лимит анализа слов на сегодня исчерпан (30/30).",
-    }
+  user_info = get_user_db(user_id)
+  lang = user_info["lang"]
+  if user_info["words_count"] >= 30:
     await message.answer(
-        msgs.get(lang, msgs["uz"]), reply_markup=get_main_menu(lang, user_id)
+        "❌ Kunlik limit tugadi.", reply_markup=get_main_menu(lang, user_id)
     )
     await state.clear()
     return
-  user_data[user_id]["words_count"] += 1
+  update_user_db(user_id, words_count=user_info["words_count"] + 1)
   update_request_stats()
-  await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-  try:
-    prompt = (
-        f"Analyze word: '{message.text}'. Language for output: '{lang}'."
-        " Rules: NO asterisks (**). Emojis only at the start of lines.\n\nFormat:"
-        "\n🔤 Word / Phrase: ...\n📊 Level (CEFR): ...\n🎙 Transcription:"
-        " ...\n🧠 Meaning: ...\n💡 Example: ...\n🇺🇿 Translation: ..."
-    )
-    completion = groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.5,
-    )
-    await message.answer(
-        completion.choices[0].message.content,
-        reply_markup=get_main_menu(lang, user_id),
-    )
-    await state.clear()
-  except Exception:
-    await message.answer("Error / Xatolik / Ошибка")
+  prompt = (
+      f"Analyze word: '{message.text}'. Output language: '{lang}'. "
+      f"Rules: NO asterisks (**). Emojis only at the start of lines."
+  )
+  completion = groq_client.chat.completions.create(
+      model="openai/gpt-oss-120b",
+      messages=[{"role": "user", "content": prompt}],
+      temperature=0.5,
+  )
+  await message.answer(
+      completion.choices[0].message.content,
+      reply_markup=get_main_menu(lang, user_id),
+  )
+  await state.clear()
 
 
-# Esse mavzusini qabul qilish
 @dp.message(BotStates.waiting_for_essay_topic)
 async def process_essay_topic(message: types.Message, state: FSMContext):
-  user_id = message.from_user.id
-  lang = user_data.get(user_id, {}).get("lang", "uz")
   await state.update_data(essay_topic=message.text)
   await state.set_state(BotStates.waiting_for_essay_photo_or_text)
-  msgs = {
-      "uz": "✅ Mavzu qabul qilindi! Endi esse matnini yoki rasmini yuboring:",
-      "en": "✅ Topic received! Now send the essay text or photo:",
-      "ru": "✅ Тема принята! Теперь отправьте текст или фото эссе:",
-  }
-  await message.answer(msgs.get(lang, msgs["uz"]))
+  await message.answer(
+      "✅ Mavzu qabul qilindi! Endi esse matnini yuboring:"
+  )
 
 
-# Esse tekshiruvi (O'ta qat'iy IELTS Examiner rejimi bilan)
 @dp.message(BotStates.waiting_for_essay_photo_or_text)
 async def process_essay_submission(message: types.Message, state: FSMContext):
   user_id = message.from_user.id
-  lang = user_data.get(user_id, {}).get("lang", "uz")
-  check_and_reset_limits(user_id)
-  if user_data[user_id]["essays_count"] >= 5:
-    msgs = {
-        "uz": "❌ Kunlik esse tekshirish limitingiz tugadi (5/5).",
-        "en": "❌ Daily essay check limit reached (5/5).",
-        "ru": "❌ Лимит проверки эссе на сегодня исчерпан (5/5).",
-    }
+  user_info = get_user_db(user_id)
+  lang = user_info["lang"]
+  if user_info["essays_count"] >= 5:
     await message.answer(
-        msgs.get(lang, msgs["uz"]), reply_markup=get_main_menu(lang, user_id)
-    )
-    await state.clear()
-    return
-  user_data[user_id]["essays_count"] += 1
-  update_request_stats()
-  data = await state.get_data()
-  topic = data.get("essay_topic", "Topic")
-  await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-  
-  essay_content = message.text if message.text else "[Photo uploaded]"
-
-  try:
-    system_prompt = (
-        "You are an exceptionally strict, uncompromising, and professional official IELTS Examiner. "
-        "Your evaluations must reflect real, rigid IELTS grading standards (Task 2).\n\n"
-        "STRICT RULES:\n"
-        "1. OFF-TOPIC OR GIBBERISH: If the essay does not address the provided topic, is incoherent, contains random text, or is off-topic, you MUST assign a Band Score of 0.0 and explicitly write that it fails the task response criteria.\n"
-        "2. NO INFLATED OR REPETITIVE SCORES: Do NOT give generic high scores (like 7.0) by default. Critically penalize grammatical errors, weak vocabulary, poor coherence, underdeveloped arguments, and word count deficiencies (if under 250 words for Task 2). Scores must realistically range from 3.0 to 9.5 based strictly on performance.\n"
-        f"3. FORMAT & LANGUAGE: Output strictly in language '{lang}'. NO asterisks (**). Use emojis only at the very beginning of lines.\n\n"
-        "Required Output Structure:\n"
-        "📊 IELTS Band Score: [...]\n"
-        "⭐ Detailed Examiner Feedback: [...]\n"
-        "❌ Major Mistakes & Grammar Flaws: [...]\n"
-        "🛠 Improved Academic Version: [...]\n"
-        "💡 Examiner Tip for Higher Band: [...]"
-    )
-
-    user_prompt = f"Topic: {topic}\n\nCandidate's Essay: {essay_content}"
-
-    completion = groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.1,
-        max_tokens=2048,
-    )
-    await message.answer(
-        completion.choices[0].message.content,
+        "❌ Kunlik esse limiti tugadi (5/5).",
         reply_markup=get_main_menu(lang, user_id),
     )
     await state.clear()
-  except Exception as e:
-    print(f"Xato: {e}")
-    await message.answer(
-        "Error / Xatolik", reply_markup=get_main_menu(lang, user_id)
-    )
+    return
+  update_user_db(user_id, essays_count=user_info["essays_count"] + 1)
+  update_request_stats()
+  data = await state.get_data()
+  topic = data.get("essay_topic", "Topic")
+  essay_content = message.text or "[Essay text]"
+
+  system_prompt = (
+      "You are an exceptionally strict, uncompromising, and professional official IELTS Examiner. "
+      "Your evaluations must reflect real, rigid IELTS grading standards (Task 2).\n\n"
+      "STRICT RULES:\n"
+      "1. OFF-TOPIC OR GIBBERISH: If the essay does not address the provided topic, is incoherent, contains random text, or is off-topic, you MUST assign a Band Score of 0.0 and explicitly write that it fails the task response criteria.\n"
+      "2. NO INFLATED OR REPETITIVE SCORES: Do NOT give generic high scores (like 7.0) by default. Critically penalize grammatical errors, weak vocabulary, poor coherence, underdeveloped arguments, and word count deficiencies (if under 250 words for Task 2). Scores must realistically range from 3.0 to 9.5 based strictly on performance.\n"
+      f"3. FORMAT & LANGUAGE: Output strictly in language '{lang}'. NO asterisks (**). Use emojis only at the very beginning of lines.\n\n"
+      "Required Output Structure:\n"
+      "📊 IELTS Band Score: [...]\n"
+      "⭐ Detailed Examiner Feedback: [...]\n"
+      "❌ Major Mistakes & Grammar Flaws: [...]\n"
+      "🛠 Improved Academic Version: [...]\n"
+      "💡 Examiner Tip for Higher Band: [...]"
+  )
+
+  completion = groq_client.chat.completions.create(
+      model="openai/gpt-oss-120b",
+      messages=[
+          {"role": "system", "content": system_prompt},
+          {
+              "role": "user",
+              "content": f"Topic: {topic}\n\nCandidate's Essay: {essay_content}",
+          },
+      ],
+      temperature=0.1,
+      max_tokens=2048,
+  )
+  await message.answer(
+      completion.choices[0].message.content,
+      reply_markup=get_main_menu(lang, user_id),
+  )
+  await state.clear()
 
 
-# 18+ filtri va umumiy xabarlar handler'i
 @dp.message()
 async def general_message_handler(message: types.Message):
   user_id = message.from_user.id
-  lang = user_data.get(user_id, {}).get("lang", "uz")
-  text_lower = message.text.lower()
+  user_info = get_user_db(user_id)
+  lang = user_info["lang"]
   
   forbidden_words = [
       "porn",
@@ -886,35 +1001,25 @@ async def general_message_handler(message: types.Message):
       "сука",
       "блять",
   ]
-  if any(word in text_lower for word in forbidden_words):
-    msgs = {
-        "uz": "❌ Kechirasiz, 18+ yoki taqiqlangan kontentga javob bera olmayman.",
-        "en": "❌ Sorry, I cannot process 18+ or prohibited content.",
-        "ru": (
-            "❌ Извините, я не могу обрабатывать контент для взрослых или"
-            " запрещенный контент."
-        ),
-    }
+  if any(word in message.text.lower() for word in forbidden_words):
     await message.answer(
-        msgs.get(lang, msgs["uz"]), reply_markup=get_main_menu(lang, user_id)
+        "❌ Kechirasiz, 18+ yoki taqiqlangan kontentga javob bera olmayman.",
+        reply_markup=get_main_menu(lang, user_id),
     )
     return
 
-  msgs = {
-      "uz": (
-          "⚠️ Iltimos, amal bajarish uchun quyidagi tugmalardan foydalaning:"
-      ),
-      "en": "⚠️ Please use the buttons below to interact:",
-      "ru": "⚠️ Пожалуйста, используйте кнопки ниже для взаимодействия:",
-  }
   await message.answer(
-      msgs.get(lang, msgs["uz"]), reply_markup=get_main_menu(lang, user_id)
+      "⚠️ Iltimos, amal bajarish uchun quyidagi tugmalardan foydalaning:",
+      reply_markup=get_main_menu(lang, user_id),
   )
 
 
 async def main():
   logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-  print("Bot barcha yangi funksiyalar bilan mukammal ishga tushdi...")
+  print(
+      "Bot barcha funksiyalar, SQLite baza va guruh turnirlari bilan to'liq"
+      " ishga tushdi..."
+  )
   await dp.start_polling(bot)
 
 
