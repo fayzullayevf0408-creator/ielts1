@@ -23,16 +23,9 @@ from groq import Groq
 # ---------------------------------------------------------------------
 # 1. TOKENLAR VA ASOSIY SOZLAMALAR
 # ---------------------------------------------------------------------
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "PASTE_NEW_TELEGRAM_TOKEN_HERE")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "PASTE_NEW_GROQ_KEY_HERE")
+TELEGRAM_BOT_TOKEN = "8559476528:AAGEap-Jm-AsCTNAs7NeAn_fZW1LM0qom3I"
+GROQ_API_KEY = "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"
 ADMIN_ID = 6773733838
-
-if "PASTE_" in TELEGRAM_BOT_TOKEN or "PASTE_" in GROQ_API_KEY:
-  sys.exit(
-      "❌ Token yoki kalit kiritilmagan. TELEGRAM_BOT_TOKEN va GROQ_API_KEY"
-      " ni muhit o'zgaruvchisi sifatida o'rnating yoki fayldagi PASTE_..."
-      " joylarga yangi qiymatlarni yozing."
-  )
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
