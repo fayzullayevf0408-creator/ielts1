@@ -140,12 +140,10 @@ class BotStates(StatesGroup):
   waiting_for_broadcast = State()
   waiting_for_flashcard_input = State()
   waiting_for_ai_prompt = State()
-
   # Speaking Part uchun alohida navbatma-navbat holatlar
   speaking_p1 = State()
   speaking_p2 = State()
   speaking_p3 = State()
-
   # Full Mock test holatlari
   mock_part1 = State()
   mock_part2 = State()
@@ -351,7 +349,6 @@ def get_main_menu(lang="uz", user_id=None):
             ),
         ],
     ]
-
   if user_id == ADMIN_ID:
     keyboard.append([
         InlineKeyboardButton(
@@ -519,7 +516,6 @@ async def process_ai_prompt(message: types.Message, state: FSMContext):
   lang = get_user_db(user_id)["lang"]
   user_query = message.text
   update_request_stats()
-
   forbidden = [
       "porn",
       "sex",
@@ -538,10 +534,9 @@ async def process_ai_prompt(message: types.Message, state: FSMContext):
     )
     await state.clear()
     return
-
   try:
     completion = groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
+        model="llama-3.3-70b-versatile",
         messages=[
             {
                 "role": "system",
@@ -577,14 +572,15 @@ async def transcribe_voice_message(message: types.Message) -> str:
   file_path = file.file_path
   ogg_path = f"voice_{message.from_user.id}.ogg"
   await bot.download_file(file_path, ogg_path)
-
   try:
     with open(ogg_path, "rb") as audio_file:
       transcript = groq_client.audio.transcriptions.create(
-          model="whisper-large-v3-turbo", file=audio_file, response_format="text"
+          model="whisper-large-v3-turbo",
+          file=audio_file,
+          response_format="verbose_json",
       )
     os.remove(ogg_path)
-    return str(transcript)
+    return str(transcript.text)
   except Exception as e:
     if os.path.exists(ogg_path):
       os.remove(ogg_path)
@@ -599,7 +595,6 @@ async def transcribe_voice_message(message: types.Message) -> str:
 async def speaking_main_menu(callback: types.CallbackQuery):
   user_id = callback.from_user.id
   lang = get_user_db(user_id)["lang"]
-
   texts = {
       "uz": (
           "🎤 **IELTS Speaking Simulator**\n\nTayyorgarlik turini"
@@ -611,7 +606,6 @@ async def speaking_main_menu(callback: types.CallbackQuery):
       "en": "🎤 **IELTS Speaking Simulator**\n\nChoose your practice mode:",
       "ru": "🎤 **IELTS Speaking Simulator**\n\nВыберите режим подготовки:",
   }
-
   markup = InlineKeyboardMarkup(
       inline_keyboard=[
           [
@@ -649,19 +643,17 @@ async def start_single_part1(callback: types.CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
   lang = get_user_db(user_id)["lang"]
   update_request_stats()
-
   prompt = (
       "Generate ONE simple IELTS Speaking Part 1 question on a random daily"
       f" topic. Output strictly in language '{lang}'. No asterisks (**)."
   )
   completion = groq_client.chat.completions.create(
-      model="openai/gpt-oss-120b",
+      model="llama-3.3-70b-versatile",
       messages=[{"role": "user", "content": prompt}],
       temperature=0.7,
       max_tokens=200,
   )
   question = completion.choices[0].message.content
-
   await state.set_state(BotStates.speaking_p1)
   await state.update_data(p1_count=1, p1_q=question)
   await callback.message.answer(
@@ -675,25 +667,22 @@ async def start_single_part1(callback: types.CallbackQuery, state: FSMContext):
 async def process_single_part1(message: types.Message, state: FSMContext):
   user_id = message.from_user.id
   lang = get_user_db(user_id)["lang"]
-
   if message.voice:
     user_ans = await transcribe_voice_message(message)
     if not user_ans:
       user_ans = "[Voice message could not be transcribed]"
   else:
     user_ans = message.text
-
   data = await state.get_data()
   count = data.get("p1_count", 1)
   update_request_stats()
-
   if count < 3:
     prompt = (
         "Generate next IELTS Speaking Part 1 question. Output strictly in"
         f" language '{lang}'. No asterisks (**)."
     )
     completion = groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
+        model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
         max_tokens=200,
@@ -701,8 +690,8 @@ async def process_single_part1(message: types.Message, state: FSMContext):
     next_q = completion.choices[0].message.content
     await state.update_data(p1_count=count + 1)
     await message.answer(
-        f"✅ Javobingiz qabul qilindi!\n\n📌 **Part 1 ({count+1}-savol):**\n\n{next_q}\n\n*Javobingizni"
-        " yuboring:*"
+        f"✅ Javobingiz qabul qilindi!\n\n📌 **Part 1"
+        f" ({count+1}-savol):**\n\n{next_q}\n\n*Javobingizni yuboring:*"
     )
   else:
     system_prompt = (
@@ -713,7 +702,7 @@ async def process_single_part1(message: types.Message, state: FSMContext):
         " only at the beginning of lines."
     )
     completion = groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
+        model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Part 1 Last Answer: {user_ans}"},
@@ -735,19 +724,17 @@ async def start_single_part2(callback: types.CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
   lang = get_user_db(user_id)["lang"]
   update_request_stats()
-
   prompt = (
       "Generate an IELTS Speaking Part 2 Cue Card topic (Describe a...). Output"
       f" strictly in language '{lang}'. No asterisks (**)."
   )
   completion = groq_client.chat.completions.create(
-      model="openai/gpt-oss-120b",
+      model="llama-3.3-70b-versatile",
       messages=[{"role": "user", "content": prompt}],
       temperature=0.7,
       max_tokens=400,
   )
   cue_card = completion.choices[0].message.content
-
   await state.set_state(BotStates.speaking_p2)
   await callback.message.answer(
       "🧭 **IELTS Speaking — Part 2 (Cue Card)**\n\n1 daqiqa o'ylab oling va 2"
@@ -768,7 +755,6 @@ async def process_single_part2(message: types.Message, state: FSMContext):
   else:
     user_ans = message.text
   update_request_stats()
-
   system_prompt = (
       "You are a strict IELTS Examiner. Evaluate this Part 2 Cue Card response"
       " based on long-turn fluency, vocabulary, grammar, and structure."
@@ -776,7 +762,7 @@ async def process_single_part2(message: types.Message, state: FSMContext):
       " only at the beginning of lines."
   )
   completion = groq_client.chat.completions.create(
-      model="openai/gpt-oss-120b",
+      model="llama-3.3-70b-versatile",
       messages=[
           {"role": "system", "content": system_prompt},
           {"role": "user", "content": f"Part 2 Response: {user_ans}"},
@@ -797,19 +783,17 @@ async def start_single_part3(callback: types.CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
   lang = get_user_db(user_id)["lang"]
   update_request_stats()
-
   prompt = (
       "Generate ONE complex discussion question for IELTS Speaking Part 3 on a"
       f" social topic. Output strictly in language '{lang}'. No asterisks (**)."
   )
   completion = groq_client.chat.completions.create(
-      model="openai/gpt-oss-120b",
+      model="llama-3.3-70b-versatile",
       messages=[{"role": "user", "content": prompt}],
       temperature=0.7,
       max_tokens=200,
   )
   question = completion.choices[0].message.content
-
   await state.set_state(BotStates.speaking_p3)
   await state.update_data(p3_count=1)
   await callback.message.answer(
@@ -829,18 +813,16 @@ async def process_single_part3(message: types.Message, state: FSMContext):
       user_ans = "[Voice message]"
   else:
     user_ans = message.text
-
   data = await state.get_data()
   count = data.get("p3_count", 1)
   update_request_stats()
-
   if count < 2:
     prompt = (
         "Generate next complex discussion question for IELTS Speaking Part 3."
         f" Output strictly in language '{lang}'. No asterisks (**)."
     )
     completion = groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
+        model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
         max_tokens=200,
@@ -848,8 +830,8 @@ async def process_single_part3(message: types.Message, state: FSMContext):
     next_q = completion.choices[0].message.content
     await state.update_data(p3_count=count + 1)
     await message.answer(
-        f"✅ Javob qabul qilindi!\n\n💬 **Part 3 ({count+1}-savol):**\n\n{next_q}\n\n*Javobingizni"
-        " yuboring:*"
+        f"✅ Javob qabul qilindi!\n\n💬 **Part 3"
+        f" ({count+1}-savol):**\n\n{next_q}\n\n*Javobingizni yuboring:*"
     )
   else:
     system_prompt = (
@@ -859,7 +841,7 @@ async def process_single_part3(message: types.Message, state: FSMContext):
         " (**). Use emojis only at the beginning of lines."
     )
     completion = groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
+        model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Part 3 Response: {user_ans}"},
@@ -881,19 +863,17 @@ async def start_full_mock(callback: types.CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
   lang = get_user_db(user_id)["lang"]
   update_request_stats()
-
   prompt = (
       "Generate ONE IELTS Speaking Part 1 question. Output strictly in language"
       f" '{lang}'. No asterisks (**)."
   )
   completion = groq_client.chat.completions.create(
-      model="openai/gpt-oss-120b",
+      model="llama-3.3-70b-versatile",
       messages=[{"role": "user", "content": prompt}],
       temperature=0.7,
       max_tokens=200,
   )
   q1 = completion.choices[0].message.content
-
   await state.set_state(BotStates.mock_part1)
   await callback.message.answer(
       f"🚀 **Full IELTS Speaking Mock Test boshlandi!**\n\n1-Bosqich: **Part 1"
@@ -913,13 +893,12 @@ async def mock_receive_part1(message: types.Message, state: FSMContext):
   )
   await state.update_data(m_ans1=ans1)
   update_request_stats()
-
   prompt = (
       "Generate an IELTS Speaking Part 2 Cue Card topic. Output strictly in"
       f" language '{lang}'. No asterisks (**)."
   )
   completion = groq_client.chat.completions.create(
-      model="openai/gpt-oss-120b",
+      model="llama-3.3-70b-versatile",
       messages=[{"role": "user", "content": prompt}],
       temperature=0.7,
       max_tokens=300,
@@ -927,7 +906,6 @@ async def mock_receive_part1(message: types.Message, state: FSMContext):
   p2_cue = completion.choices[0].message.content
   await state.set_state(BotStates.mock_part2)
   await state.update_data(m_cue2=p2_cue)
-
   await message.answer(
       f"✅ Part 1 yakunlandi!\n\n2-Bosqich: **Part 2 (Cue"
       f" Card)**\nMavzu:\n\n{p2_cue}\n\n*Ovozli xabar yoki matn ko'rinishida"
@@ -945,24 +923,21 @@ async def mock_receive_part2(message: types.Message, state: FSMContext):
       else message.text
   )
   await state.update_data(m_ans2=ans2)
-
   data = await state.get_data()
   p2_topic = data.get("m_cue2", "Topic")
   update_request_stats()
-
   prompt = (
       "Generate ONE Part 3 discussion question based on this topic:"
       f" {p2_topic}. Output strictly in language '{lang}'. No asterisks (**)."
   )
   completion = groq_client.chat.completions.create(
-      model="openai/gpt-oss-120b",
+      model="llama-3.3-70b-versatile",
       messages=[{"role": "user", "content": prompt}],
       temperature=0.7,
       max_tokens=200,
   )
   p3_q = completion.choices[0].message.content
   await state.set_state(BotStates.mock_part3)
-
   await message.answer(
       f"✅ Part 2 qabul qilindi!\n\n3-Bosqich: **Part"
       f" 3 (Discussion)**\n\n{p3_q}\n\n*Oxirgi javobingizni yuboring:*"
@@ -970,7 +945,9 @@ async def mock_receive_part2(message: types.Message, state: FSMContext):
 
 
 @dp.message(BotStates.mock_part3, F.voice | F.text)
-async def mock_receive_part3_and_finish(message: types.Message, state: FSMContext):
+async def mock_receive_part3_and_finish(
+    message: types.Message, state: FSMContext
+):
   user_id = message.from_user.id
   lang = get_user_db(user_id)["lang"]
   ans3 = (
@@ -978,12 +955,10 @@ async def mock_receive_part3_and_finish(message: types.Message, state: FSMContex
       if message.voice
       else message.text
   )
-
   data = await state.get_data()
   ans1 = data.get("m_ans1", "")
   ans2 = data.get("m_ans2", "")
   update_request_stats()
-
   system_prompt = (
       "You are an official, strict, and professional IELTS Examiner. Evaluate"
       " the candidate's complete Full Mock Test (Part 1, Part 2, Part 3"
@@ -997,10 +972,9 @@ async def mock_receive_part3_and_finish(message: types.Message, state: FSMContex
       " Examiner Feedback: [...]\n❌ Major Mistakes & Grammar Flaws:"
       " [...]\n🛠 Actionable Tips for Higher Band: [...]"
   )
-
   try:
     completion = groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
+        model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": system_prompt},
             {
@@ -1035,7 +1009,6 @@ async def interactive_quiz_handler(callback: types.CallbackQuery):
   user_id = callback.from_user.id
   lang = get_user_db(user_id)["lang"]
   update_request_stats()
-
   prompt = (
       "Create an IELTS idiom or vocabulary multiple choice question. Provide"
       " the Question, and 4 options labeled exactly as 'A)', 'B)', 'C)',"
@@ -1044,18 +1017,16 @@ async def interactive_quiz_handler(callback: types.CallbackQuery):
   )
   try:
     completion = groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
+        model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
         max_tokens=500,
     )
     content = completion.choices[0].message.content
-
     correct_option = "A"
     for line in content.split("\n"):
       if "CORRECT:" in line.upper():
         correct_option = line.split(":")[-1].strip().upper()
-
     markup = InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -1089,7 +1060,6 @@ async def process_quiz_answer(callback: types.CallbackQuery):
   correct_choice = parts[3]
   user_id = callback.from_user.id
   lang = get_user_db(user_id)["lang"]
-
   if user_choice == correct_choice:
     await callback.message.answer(
         f"✅ To'g'ri! Siz tanlagan javob ({user_choice}) to'g'ri chiqdi! 🎉",
@@ -1173,7 +1143,7 @@ async def flashcard_finish(callback: types.CallbackQuery, state: FSMContext):
   )
   try:
     completion = groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
+        model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
         max_tokens=800,
@@ -1199,7 +1169,7 @@ async def math_mode(callback: types.CallbackQuery):
   )
   try:
     completion = groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
+        model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.5,
         max_tokens=1000,
@@ -1224,7 +1194,7 @@ async def random_topic_mode(callback: types.CallbackQuery):
   )
   try:
     completion = groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
+        model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
         max_tokens=800,
@@ -1248,7 +1218,6 @@ async def mode_callback(callback: types.CallbackQuery, state: FSMContext):
   user_id = callback.from_user.id
   user_info = get_user_db(user_id)
   lang = user_info["lang"]
-
   if action == "word":
     if user_info["words_count"] >= 30:
       await callback.message.answer(
@@ -1320,7 +1289,7 @@ async def send_daily_idiom_for_user(user_id: int):
           f" {current_day}. Explanation language: '{lang}'. No asterisks (**)."
       )
       completion = groq_client.chat.completions.create(
-          model="openai/gpt-oss-120b",
+          model="llama-3.3-70b-versatile",
           messages=[{"role": "user", "content": prompt}],
           temperature=0.7,
       )
@@ -1346,7 +1315,7 @@ async def process_word(message: types.Message, state: FSMContext):
       " asterisks (**). Emojis only at the start of lines."
   )
   completion = groq_client.chat.completions.create(
-      model="openai/gpt-oss-120b",
+      model="llama-3.3-70b-versatile",
       messages=[{"role": "user", "content": prompt}],
       temperature=0.5,
   )
@@ -1374,7 +1343,6 @@ async def process_essay_submission(message: types.Message, state: FSMContext):
   data = await state.get_data()
   topic = data.get("essay_topic", "Topic")
   essay_content = message.text or "[Essay text]"
-
   system_prompt = (
       "You are an exceptionally strict, uncompromising, and professional"
       f" official IELTS Examiner. Output strictly in language '{lang}'. NO"
@@ -1384,7 +1352,7 @@ async def process_essay_submission(message: types.Message, state: FSMContext):
       " Academic Version: [...]\n💡 Examiner Tip for Higher Band: [...]"
   )
   completion = groq_client.chat.completions.create(
-      model="openai/gpt-oss-120b",
+      model="llama-3.3-70b-versatile",
       messages=[
           {"role": "system", "content": system_prompt},
           {
@@ -1410,10 +1378,8 @@ async def general_message_handler(message: types.Message):
   user_id = message.from_user.id
   user_info = get_user_db(user_id)
   lang = user_info["lang"]
-
   if not message.text:
     return
-
   forbidden_words = [
       "porn",
       "sex",
@@ -1430,11 +1396,10 @@ async def general_message_handler(message: types.Message):
         reply_markup=get_main_menu(lang, user_id),
     )
     return
-
   update_request_stats()
   try:
     completion = groq_client.chat.completions.create(
-        model="openai/gpt-oss-120b",
+        model="llama-3.3-70b-versatile",
         messages=[
             {
                 "role": "system",
@@ -1466,7 +1431,7 @@ async def general_message_handler(message: types.Message):
 async def main():
   logging.basicConfig(level=logging.INFO, stream=sys.stdout)
   print(
-      "Bot to'liq 1127 qatorli hajmda, Whisper ovozli xabar tahlili,"
+      "Bot to'liq hajmda, Whisper ovozli xabar tahlili,"
       " interaktiv tugmali quiz, navbatma-navbat Speaking va AI yordamchi"
       " bilan muvaffaqiyatli ishga tushdi..."
   )
