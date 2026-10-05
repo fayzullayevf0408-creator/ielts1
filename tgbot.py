@@ -28,8 +28,8 @@ bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# Hozirda aniq ishlaydigan Groq modeli:
-AI_MODEL = "llama-3.1-70b-versatile"
+# Hozirda Groq'da barqaror ishlaydigan model:
+AI_MODEL = "llama-3.3-70b-specdec"
 
 # ---------------------------------------------------------------------
 # 2. SQLITE BAZA BILAN ISHLASH VA JADVALLARNI YARATISH
