@@ -536,7 +536,7 @@ async def process_ai_prompt(message: types.Message, state: FSMContext):
     return
   try:
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=[
             {
                 "role": "system",
@@ -648,7 +648,7 @@ async def start_single_part1(callback: types.CallbackQuery, state: FSMContext):
       f" topic. Output strictly in language '{lang}'. No asterisks (**)."
   )
   completion = groq_client.chat.completions.create(
-      model="llama-3.3-70b-versatile",
+      model="llama-3.1-8b-instant",
       messages=[{"role": "user", "content": prompt}],
       temperature=0.7,
       max_tokens=200,
@@ -682,7 +682,7 @@ async def process_single_part1(message: types.Message, state: FSMContext):
         f" language '{lang}'. No asterisks (**)."
     )
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
         max_tokens=200,
@@ -702,7 +702,7 @@ async def process_single_part1(message: types.Message, state: FSMContext):
         " only at the beginning of lines."
     )
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Part 1 Last Answer: {user_ans}"},
@@ -729,7 +729,7 @@ async def start_single_part2(callback: types.CallbackQuery, state: FSMContext):
       f" strictly in language '{lang}'. No asterisks (**)."
   )
   completion = groq_client.chat.completions.create(
-      model="llama-3.3-70b-versatile",
+      model="llama-3.1-8b-instant",
       messages=[{"role": "user", "content": prompt}],
       temperature=0.7,
       max_tokens=400,
@@ -762,7 +762,7 @@ async def process_single_part2(message: types.Message, state: FSMContext):
       " only at the beginning of lines."
   )
   completion = groq_client.chat.completions.create(
-      model="llama-3.3-70b-versatile",
+      model="llama-3.1-8b-instant",
       messages=[
           {"role": "system", "content": system_prompt},
           {"role": "user", "content": f"Part 2 Response: {user_ans}"},
@@ -788,7 +788,7 @@ async def start_single_part3(callback: types.CallbackQuery, state: FSMContext):
       f" social topic. Output strictly in language '{lang}'. No asterisks (**)."
   )
   completion = groq_client.chat.completions.create(
-      model="llama-3.3-70b-versatile",
+      model="llama-3.1-8b-instant",
       messages=[{"role": "user", "content": prompt}],
       temperature=0.7,
       max_tokens=200,
@@ -822,7 +822,7 @@ async def process_single_part3(message: types.Message, state: FSMContext):
         f" Output strictly in language '{lang}'. No asterisks (**)."
     )
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
         max_tokens=200,
@@ -841,7 +841,7 @@ async def process_single_part3(message: types.Message, state: FSMContext):
         " (**). Use emojis only at the beginning of lines."
     )
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Part 3 Response: {user_ans}"},
@@ -868,7 +868,7 @@ async def start_full_mock(callback: types.CallbackQuery, state: FSMContext):
       f" '{lang}'. No asterisks (**)."
   )
   completion = groq_client.chat.completions.create(
-      model="llama-3.3-70b-versatile",
+      model="llama-3.1-8b-instant",
       messages=[{"role": "user", "content": prompt}],
       temperature=0.7,
       max_tokens=200,
@@ -898,7 +898,7 @@ async def mock_receive_part1(message: types.Message, state: FSMContext):
       f" language '{lang}'. No asterisks (**)."
   )
   completion = groq_client.chat.completions.create(
-      model="llama-3.3-70b-versatile",
+      model="llama-3.1-8b-instant",
       messages=[{"role": "user", "content": prompt}],
       temperature=0.7,
       max_tokens=300,
@@ -931,7 +931,7 @@ async def mock_receive_part2(message: types.Message, state: FSMContext):
       f" {p2_topic}. Output strictly in language '{lang}'. No asterisks (**)."
   )
   completion = groq_client.chat.completions.create(
-      model="llama-3.3-70b-versatile",
+      model="llama-3.1-8b-instant",
       messages=[{"role": "user", "content": prompt}],
       temperature=0.7,
       max_tokens=200,
@@ -974,7 +974,7 @@ async def mock_receive_part3_and_finish(
   )
   try:
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=[
             {"role": "system", "content": system_prompt},
             {
@@ -1017,7 +1017,7 @@ async def interactive_quiz_handler(callback: types.CallbackQuery):
   )
   try:
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
         max_tokens=500,
@@ -1143,7 +1143,7 @@ async def flashcard_finish(callback: types.CallbackQuery, state: FSMContext):
   )
   try:
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
         max_tokens=800,
@@ -1169,7 +1169,7 @@ async def math_mode(callback: types.CallbackQuery):
   )
   try:
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.5,
         max_tokens=1000,
@@ -1194,7 +1194,7 @@ async def random_topic_mode(callback: types.CallbackQuery):
   )
   try:
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
         max_tokens=800,
@@ -1289,7 +1289,7 @@ async def send_daily_idiom_for_user(user_id: int):
           f" {current_day}. Explanation language: '{lang}'. No asterisks (**)."
       )
       completion = groq_client.chat.completions.create(
-          model="llama-3.3-70b-versatile",
+          model="llama-3.1-8b-instant",
           messages=[{"role": "user", "content": prompt}],
           temperature=0.7,
       )
@@ -1315,7 +1315,7 @@ async def process_word(message: types.Message, state: FSMContext):
       " asterisks (**). Emojis only at the start of lines."
   )
   completion = groq_client.chat.completions.create(
-      model="llama-3.3-70b-versatile",
+      model="llama-3.1-8b-instant",
       messages=[{"role": "user", "content": prompt}],
       temperature=0.5,
   )
@@ -1352,7 +1352,7 @@ async def process_essay_submission(message: types.Message, state: FSMContext):
       " Academic Version: [...]\n💡 Examiner Tip for Higher Band: [...]"
   )
   completion = groq_client.chat.completions.create(
-      model="llama-3.3-70b-versatile",
+      model="llama-3.1-8b-instant",
       messages=[
           {"role": "system", "content": system_prompt},
           {
@@ -1399,7 +1399,7 @@ async def general_message_handler(message: types.Message):
   update_request_stats()
   try:
     completion = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama-3.1-8b-instant",
         messages=[
             {
                 "role": "system",
