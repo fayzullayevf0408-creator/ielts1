@@ -21,7 +21,7 @@ from groq import Groq
 # 1. TOKENLAR VA ASOSIY SOZLAMALAR
 # ---------------------------------------------------------------------
 TELEGRAM_BOT_TOKEN = "8559476528:AAGEap-Jm-AsCTNAs7NeAn_fZW1LM0qom3I"
-GROQ_API_KEY = "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"
+GROQ_API_KEY = "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"  # Yangi kalitni kiriting
 ADMIN_ID = 6773733838
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
